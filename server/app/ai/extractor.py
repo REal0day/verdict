@@ -245,13 +245,20 @@ def _greedy_merge(chunks: list[str]) -> list[str]:
     return out
 
 
-# ----- single Claude call helper -----
+# ----- single model-call helper -----
+
+# Extraction JSON for ~25 detailed findings fits comfortably in 16k. Pass it
+# explicitly: only the Anthropic provider used to apply a default, so other
+# providers silently truncated long extractions at their own server-side cap.
+EXTRACT_MAX_TOKENS = 16384
+
 
 def _call(provider, system: str, chunk: str) -> Optional[dict]:
     try:
         raw = provider.chat(
             system,
             [{"role": "user", "content": _USER_TEMPLATE.format(text=chunk)}],
+            max_tokens=EXTRACT_MAX_TOKENS,
         )
     except Exception as e:
         log.warning("extractor: provider call failed: %s", e)
@@ -476,7 +483,11 @@ def enrich_findings(
     )
 
     provider = get_provider(provider_name)
-    raw = provider.chat(_ENRICH_SYSTEM, [{"role": "user", "content": user_msg}])
+    raw = provider.chat(
+        _ENRICH_SYSTEM,
+        [{"role": "user", "content": user_msg}],
+        max_tokens=EXTRACT_MAX_TOKENS,
+    )
     parsed = _try_parse(raw)
     if not parsed or not isinstance(parsed.get("findings"), list):
         log.warning("enrich_findings: bad model output (%d chars)", len(raw or ""))

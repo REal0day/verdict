@@ -17,6 +17,7 @@ def summarize(text: str, provider_name: str | None = None) -> str | None:
         return provider.chat(
             _SUMMARY_SYSTEM,
             [{"role": "user", "content": text[:100_000]}],
+            max_tokens=2048,
         )
     except Exception as e:  # never block ingest on summarizer failure
         log.warning("summarize failed: %s", e)

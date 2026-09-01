@@ -354,52 +354,62 @@ summaries, extraction and chat. This matters most for the audience the tool is
 aimed at: a small team standing up a PSIRT function, reading their own source
 code, who may not be permitted to send that code to a third-party API at all.
 
-Nothing here is a rename. The provider abstraction already exists
-(`app/ai/base.py:get_provider`) and OpenAI, Gemini and Grok providers are
-already implemented and reachable via `IRS_DEFAULT_AI_PROVIDER`. What is
-missing is that the *operational* surface — credential storage, key testing,
-model choice, and half a dozen call sites — still assumes Anthropic.
+**Status:** phases 1, 2 and 5 have landed — every feature now runs through
+the provider abstraction, each provider is configurable from the portal, and
+local/self-hosted models work both on the server's own machine and on another
+host. Phases 3 and 4 (per-team/per-project model choice, and the
+Claude-Code-only Workbench agent) are still open.
 
-### Phase 1 — finish the server-side abstraction
+### Phase 1 — finish the server-side abstraction *(landed)*
 
-- [ ] **Route the last two direct-SDK call sites through `get_provider()`.**
-      `ai/import_planner.py:394` and `routers/scans.py:806` each construct
-      `anthropic.Anthropic(...)` directly, so folder-import planning and
-      finding-enrichment hard-fail on a non-Anthropic deployment even though
-      `summarizer`, `extractor` and `component_analyzer` already go through
-      the abstraction.
-- [ ] **Widen the `AIProvider` contract past `chat()`.** The extractor and
-      import planner need reliable structured/JSON output and a large output
-      budget. `max_tokens=16384` is set only in the Anthropic provider; the
-      three httpx providers send no limit at all, so long extractions will
-      silently truncate differently per provider. Add `max_tokens` and a
-      `json_mode`/response-format hint to the interface, with per-provider
-      translation.
-- [ ] **Provider-aware model defaults.** Each provider carries its own
-      `*_model` setting already; make sure a wrong/unavailable model id fails
-      as `AIProviderUnavailable` with the model name in the message (already
-      true for Anthropic's `NotFoundError` — replicate for the others).
+- [x] **Route the last two direct-SDK call sites through `get_provider()`.**
+      `ai/import_planner.py` and `routers/scans.py` no longer import the
+      Anthropic SDK. The planner was the harder one: it is a 40-iteration
+      tool-use loop, so a plain `chat()` swap wasn't enough — see the tool
+      abstraction below. `run_ai_verdict` also dropped its Anthropic-specific
+      "key not configured" pre-check, which reported the wrong thing on a
+      non-Anthropic deployment, and now records `provider.model` rather than
+      the Anthropic model name.
+- [x] **Provider-neutral tool use.** New `ai/tools.py` defines `ToolSpec`,
+      `ToolCall`, `ToolResult` and `AssistantTurn`, plus a `ToolConversation`
+      that owns its own provider-native message history — Anthropic threads
+      `tool_use`/`tool_result` content blocks, OpenAI uses `tool_calls` and
+      `role="tool"` messages, and neither shape leaks to the caller.
+      Implemented for Anthropic and every OpenAI-compatible endpoint; Gemini
+      raises the new `AICapabilityUnsupported` naming providers that do work.
+- [x] **Widen the `AIProvider` contract past `chat()`.** `chat()` takes
+      `max_tokens`, and every call site now passes one explicitly. Previously
+      only the Anthropic provider applied a cap, so the same extraction
+      silently truncated at a different length on every other provider.
+- [x] **Consolidate the OpenAI-shaped providers.** OpenAI, xAI and every
+      self-hosted endpoint now share `ai/openai_compatible.py`;
+      `openai_provider.py` and `grok_provider.py` are gone. A local model is
+      not a special case — it is the same provider with a different base URL.
 
-### Phase 2 — per-provider credentials in the portal
+### Phase 2 — per-provider credentials in the portal *(landed)*
 
-- [ ] **Generalise the settings store.** `routers/settings.py` persists exactly
-      one key (`ANTHROPIC_KEY = "anthropic_api_key"`). Move to
-      `ai_key:<provider>` rows in `app_settings` so every provider's key can be
-      set, cleared and tested from the UI, and `load_ai_settings()` rehydrates
-      all of them at startup rather than just Anthropic's.
-- [ ] **Parameterise the endpoints by provider.** `GET`/`PUT /settings/ai` and
-      `POST /settings/ai/test` are Anthropic-shaped;
-      `AISettingsIn.anthropic_api_key` should become
-      `{provider, api_key}`. `/ai/test` imports the Anthropic SDK directly —
-      it should issue a 1-token probe through `get_provider(name).chat()` so
-      the test path is the same code the real path uses.
-- [ ] **Make `/settings/ai/status` multi-provider.** It currently reports
-      `configured` from the Anthropic key alone, so a working
-      OpenAI-only deployment reports itself unconfigured and the chat UI shows
-      a false warning. Report per-provider status plus which one is active.
-- [ ] **Admin Settings page** (`frontend/src/pages/admin/Settings.tsx`) hardcodes
-      "Anthropic API key" — make it a per-provider list with the active one
-      marked.
+- [x] **Generalised the settings store.** `app_settings` now holds
+      `ai_key:<provider>`, `ai_model:<provider>`, `ai_base_url:<provider>` and
+      `ai_active_provider`. `load_ai_settings()` rehydrates all of them at
+      startup — previously only Anthropic's key came back after a restart, so
+      a portal-configured OpenAI or local deployment silently reverted to env
+      values.
+- [x] **Parameterised the endpoints by provider.** `GET`/`PUT /settings/ai`
+      speak `{provider, api_key?, model?, base_url?}` and return every
+      provider's state. `POST /settings/ai/test` sends a 1-token probe through
+      `get_provider().chat()` instead of importing a vendor SDK, so the test
+      path is exactly the path the app uses.
+- [x] **`PUT /settings/ai/active`** switches the provider at runtime and
+      persists the choice, so it survives a restart. Refuses to activate a
+      provider that isn't configured.
+- [x] **Fixed `/settings/ai/status` reporting only Anthropic.** It read
+      `provider_keys.anthropic_api_key` regardless of the active provider, so
+      a working OpenAI-only or local deployment showed a false "not
+      configured" warning and disabled Send. It now reports the active
+      provider plus `any_configured`, which lets the UI distinguish "nothing
+      is set up" from "the active one isn't, but another is".
+- [x] **Admin Settings page** is a per-provider list with the active one
+      marked, a provider switcher, a test button, and a local-model scanner.
 
 ### Phase 3 — choosing a provider and model per request
 
@@ -427,18 +437,41 @@ model choice, and half a dozen call sites — still assumes Anthropic.
       This is the deepest coupling in the codebase and should be scoped on its
       own.
 
-### Phase 5 — local and self-hosted models
+### Phase 5 — local and self-hosted models *(landed early)*
 
-- [ ] **OpenAI-compatible `base_url` override.** Ollama, vLLM, LM Studio,
-      LiteLLM and OpenRouter all speak the OpenAI chat-completions shape, so a
-      single configurable base URL on the existing OpenAI provider unlocks all
-      of them with very little code. For a team that cannot send source to a
-      third-party API, this is the difference between the tool being usable and
-      not — arguably the highest-value item in this whole section.
-- [ ] **Document the trade-off.** Local models are materially worse at the
-      structured extraction the findings pipeline depends on. Note expected
-      quality loss, and keep the extractor's schema validation strict enough to
-      fail loudly rather than write junk findings.
+Pulled forward ahead of phases 3–4: for a team that cannot send source code to
+a third-party API, this is the difference between the tool being usable and
+not, so it shipped alongside phases 1–2.
+
+- [x] **OpenAI-compatible `base_url` override.** A `local` provider speaks the
+      OpenAI chat API against any operator-supplied endpoint — Ollama, vLLM,
+      LM Studio, llama.cpp, LocalAI, LiteLLM, OpenRouter. It requires no API
+      key (most local servers ignore one) and supports tool use, so the import
+      planner runs on it too. `OPENAI_BASE_URL` / `XAI_BASE_URL` are
+      overridable for the same reason.
+- [x] **A model on the same machine as the server.** The server normally runs
+      in a container, where the operator's `localhost` is not the container's.
+      `resolve_local_url()` rewrites loopback to `host.docker.internal` when
+      containerised (disable with `IRS_LOCAL_AI_NO_REWRITE=1`), and
+      `docker-compose.yml` maps that name to `host-gateway` so it also works
+      on Linux, not just Docker Desktop. This was the single most likely way
+      the setup would silently fail.
+- [x] **A model on another host.** Same provider, non-loopback URL, left
+      exactly as entered. `normalise_base_url()` adds a missing scheme and
+      `/v1`, since Ollama's docs show `http://localhost:11434` while its
+      OpenAI-compatible routes live under `/v1` — a confusing 404 otherwise.
+- [x] **One-click discovery.** `GET /settings/ai/local/discover` probes the
+      default ports for Ollama, LM Studio, vLLM, LocalAI and
+      text-generation-webui and lists the models each reports, so an operator
+      can pick one instead of typing a URL.
+- [ ] **Document the quality trade-off.** Local models are materially worse at
+      the structured extraction the findings pipeline depends on. Note the
+      expected quality loss, and keep the extractor's schema validation strict
+      enough to fail loudly rather than write junk findings.
+- [ ] **Streaming for slow local models.** A CPU-bound local model can take
+      minutes; the request timeout is already raised to 300s for them, but the
+      UI still shows a spinner with no progress. Overlaps with the existing
+      "streaming chat responses" item.
 
 ## Nice-to-have (post-blocker)
 

@@ -63,6 +63,29 @@ class AIProviderUnavailable(AIProviderError):
         super().__init__(provider, reason, "")
 
 
+class AICapabilityUnsupported(AIProviderError):
+    """The active provider cannot do what this feature needs.
+
+    Raised when e.g. a provider without tool-calling is asked to drive the
+    folder-import planner. A configuration problem, not a bug — hence 503 and
+    a message naming a provider that would work.
+    """
+
+    status_code = 503
+
+    def __init__(self, provider: str, capability: str, works_with: str = ""):
+        remedy = (
+            f"Switch the AI provider to one that supports it ({works_with})."
+            if works_with
+            else "Switch to a provider that supports it."
+        )
+        super().__init__(
+            provider,
+            f"The configured provider ({provider}) does not support {capability}.",
+            remedy,
+        )
+
+
 def raise_for_upstream_status(provider: str, status_code: int, body: str = "") -> None:
     """Translate an upstream HTTP status into a typed error.
 

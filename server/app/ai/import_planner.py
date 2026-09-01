@@ -21,7 +21,9 @@ import mimetypes
 import os
 from typing import Any
 
-from ..config import provider_keys
+
+from .base import get_provider
+from .tools import ToolResult, ToolSpec
 
 log = logging.getLogger("irs.import_planner")
 
@@ -109,7 +111,7 @@ def _walk_tree(root: str) -> list[dict]:
 
 
 # ----- tool definitions for Claude -----
-TOOLS = [
+_TOOL_DEFS = [
     {
         "name": "read_file",
         "description": (
@@ -118,7 +120,7 @@ TOOLS = [
             "it is. Returns text content for text-y files; for binaries "
             "returns a hexdump-ish note."
         ),
-        "input_schema": {
+        "parameters": {
             "type": "object",
             "properties": {
                 "relpath": {
@@ -136,7 +138,7 @@ TOOLS = [
             "you've decided how to organize every file. After this is "
             "called, your turn ends."
         ),
-        "input_schema": {
+        "parameters": {
             "type": "object",
             "properties": {
                 "project": {
@@ -277,6 +279,11 @@ the plan.
 """
 
 
+TOOLS = [
+    ToolSpec(name=t["name"], description=t["description"], parameters=t["parameters"])
+    for t in _TOOL_DEFS
+]
+
 def _build_initial_user_message(
     files: list[dict],
     existing_projects: list[dict],
@@ -389,14 +396,11 @@ def plan_folder(
 ) -> tuple[dict, str]:
     """Run the planner. Returns (plan, log_text).
 
-    Raises if Claude doesn't produce a valid plan within the iteration budget.
+    Runs against whichever provider is configured, via the tool-use
+    abstraction in `ai/tools.py`. Raises if the model doesn't produce a valid
+    plan within the iteration budget.
     """
-    import anthropic
-
-    if not provider_keys.anthropic_api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY not set")
-
-    client = anthropic.Anthropic(api_key=provider_keys.anthropic_api_key)
+    provider = get_provider()
 
     files = _walk_tree(staging_root)
     if not files:
@@ -405,69 +409,49 @@ def plan_folder(
     log_lines: list[str] = []
     log_lines.append(f"tree: {len(files)} files")
 
-    messages: list[dict] = [{
-        "role": "user",
-        "content": _build_initial_user_message(
-            files, existing_projects, user_label=user_label,
-        ),
-    }]
+    convo = provider.start_tools(_SYSTEM_PROMPT, TOOLS, max_tokens=8192)
+    first_message = _build_initial_user_message(
+        files, existing_projects, user_label=user_label,
+    )
 
     final_plan: dict | None = None
+    turn = convo.send_user(first_message)
 
     for it in range(MAX_ITERATIONS):
-        resp = client.messages.create(
-            model=provider_keys.anthropic_model,
-            max_tokens=8192,
-            system=_SYSTEM_PROMPT,
-            tools=TOOLS,
-            messages=messages,
+        log.info(
+            "planner iter=%d stop=%s tool_calls=%d",
+            it, turn.stop_reason, len(turn.tool_calls),
         )
-        log.info("planner iter=%d stop=%s blocks=%d", it, resp.stop_reason, len(resp.content))
 
-        # Capture Claude's reply into messages so the loop continues correctly.
-        messages.append({"role": "assistant", "content": resp.content})
-
-        if resp.stop_reason == "end_turn":
-            log_lines.append(f"iter {it}: ended without calling submit_plan; aborting")
+        if not turn.wants_tools:
+            log_lines.append(
+                f"iter {it}: model stopped ({turn.stop_reason}) without calling "
+                "submit_plan; aborting"
+            )
             break
 
-        tool_results: list[dict] = []
-        for block in resp.content:
-            if getattr(block, "type", "") != "tool_use":
-                continue
-            if block.name == "read_file":
-                rel = block.input.get("relpath", "")
+        results: list[ToolResult] = []
+        for call in turn.tool_calls:
+            if call.name == "read_file":
+                rel = call.arguments.get("relpath", "")
                 content = _read_for_claude(staging_root, rel)
                 log_lines.append(f"iter {it}: read_file {rel!r} -> {len(content)} chars")
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": content,
-                })
-            elif block.name == "submit_plan":
-                final_plan = block.input
+                results.append(ToolResult(call_id=call.id, content=content))
+            elif call.name == "submit_plan":
+                final_plan = call.arguments
                 log_lines.append(f"iter {it}: submit_plan received")
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": "plan recorded",
-                })
+                results.append(ToolResult(call_id=call.id, content="plan recorded"))
             else:
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": f"unknown tool {block.name!r}",
-                    "is_error": True,
-                })
+                results.append(ToolResult(
+                    call_id=call.id,
+                    content=f"unknown tool {call.name!r}",
+                    is_error=True,
+                ))
 
         if final_plan is not None:
             break
 
-        if not tool_results:
-            log_lines.append(f"iter {it}: assistant produced no tool calls; aborting")
-            break
-
-        messages.append({"role": "user", "content": tool_results})
+        turn = convo.send_tool_results(results)
 
     if final_plan is None:
         raise RuntimeError("planner finished without submitting a plan")

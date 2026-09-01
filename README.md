@@ -12,11 +12,11 @@ encrypted at rest, summarised by the AI provider you configure, and browsable
 via a web UI with team-scoped RBAC. Users can also chat with the model about
 their reports and have it generate new server-side reports.
 
-Server-side AI is provider-pluggable — Anthropic, OpenAI, Gemini and xAI are
-implemented today and selected with `IRS_DEFAULT_AI_PROVIDER`. See
-[ROADMAP.md](./ROADMAP.md#model-agnostic-ai-support) for the work that remains
-to make every surface (credential storage, model choice, the Workbench agent)
-fully model-agnostic.
+Server-side AI is model-agnostic: Anthropic, OpenAI, Gemini, xAI, or **any
+OpenAI-compatible endpoint you host yourself** (Ollama, vLLM, LM Studio,
+llama.cpp, LocalAI, LiteLLM, OpenRouter). Pick one with
+`IRS_DEFAULT_AI_PROVIDER`, or from the portal under **Settings → AI** — the
+choice is stored server-side and applied without a redeploy.
 
 ```
 ┌──────────┐  *.md   ┌──────────┐  TLS+API key  ┌──────────────┐
@@ -122,6 +122,39 @@ from .base import Collector, register, _home
 register(Collector(name="mytool", default_paths=[_home("mytool-out")], glob="*.md"))
 ```
 …and a matching enum value in `server/app/models.py:SourceTool` if you want it tagged.
+
+## Using your own model
+
+If your code can't leave your network, point Verdict at a model you run.
+
+**On the same machine as the server**
+```bash
+ollama serve && ollama pull llama3.1:8b      # or LM Studio, vLLM, llama.cpp…
+```
+Then in the portal: **Settings → AI → Scan for local models**, and pick the
+model it finds. Or set it directly:
+```bash
+LOCAL_AI_BASE_URL=http://localhost:11434/v1
+LOCAL_AI_MODEL=llama3.1:8b
+IRS_DEFAULT_AI_PROVIDER=local
+```
+> The server runs in a container, so *your* `localhost` isn't its `localhost`.
+> Verdict rewrites loopback URLs to `host.docker.internal` automatically, and
+> compose maps that to `host-gateway` so it works on Linux too. Disable the
+> rewrite with `IRS_LOCAL_AI_NO_REWRITE=1`.
+
+**On another host**
+```bash
+LOCAL_AI_BASE_URL=http://gpu-box.lan:11434/v1
+LOCAL_AI_MODEL=qwen2.5-coder:7b
+```
+Non-loopback URLs are used exactly as given. A missing scheme or trailing
+`/v1` is filled in for you.
+
+Most local servers ignore `LOCAL_AI_API_KEY`; set it only if yours wants one
+(LiteLLM and OpenRouter do). Tool calling is supported, so the folder-import
+planner works on a local model as well — though smaller models are noticeably
+worse at the structured extraction the findings pipeline depends on.
 
 ## Encryption model
 * **In transit:** TLS between agent ↔ server (terminate at your reverse proxy).

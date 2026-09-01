@@ -24,6 +24,11 @@ services:
       - "8000:8000"
     volumes:
       - irs_data:/data
+    # Lets the server reach a model running on the host (Ollama, LM Studio,
+    # vLLM) at host.docker.internal. Docker Desktop provides this name
+    # already; on Linux it only exists with this mapping.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       db:
         condition: service_healthy

@@ -765,19 +765,17 @@ def run_ai_verdict(
     db: Session = Depends(get_db),
     viewer: models.User = Depends(get_current_user),
 ):
-    """Ask Claude to TP/FP a finding. Anyone allowed to edit the scan
-    can trigger it. Writes ai_verdict + ai_rationale; never touches the
-    dev verdict (`status`)."""
+    """Ask the configured model to TP/FP a finding. Anyone allowed to edit
+    the scan can trigger it. Writes ai_verdict + ai_rationale; never touches
+    the dev verdict (`status`)."""
     import json
-    from ..config import provider_keys
+    from ..ai.base import get_provider
+    from ..ai.errors import AIProviderError
 
     f = db.get(models.Finding, finding_id)
     if not f or f.scan_id != scan_id:
         raise HTTPException(404, "Not found")
     assert_can_edit_scan(db, viewer, f.scan)
-
-    if not provider_keys.anthropic_api_key:
-        raise HTTPException(503, "Anthropic API key not configured")
 
     summary_lines = [
         f"Title: {f.title or '(none)'}",
@@ -803,17 +801,14 @@ def run_ai_verdict(
     ]
     prompt = "\n".join(summary_lines)
 
-    import anthropic
-    client = anthropic.Anthropic(api_key=provider_keys.anthropic_api_key)
+    provider = get_provider()
     try:
-        resp = client.messages.create(
-            model=provider_keys.anthropic_model,
+        raw = provider.chat(
+            _AI_VERDICT_SYSTEM,
+            [{"role": "user", "content": prompt}],
             max_tokens=512,
-            system=_AI_VERDICT_SYSTEM,
-            messages=[{"role": "user", "content": prompt}],
         )
-        raw = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
-        # Strip code fences if Claude ignored the no-markdown instruction.
+        # Strip code fences if the model ignored the no-markdown instruction.
         raw = raw.strip()
         if raw.startswith("```"):
             raw = raw.split("```", 2)[1]
@@ -821,6 +816,8 @@ def run_ai_verdict(
                 raw = raw[4:]
             raw = raw.strip("`\n ")
         parsed = json.loads(raw)
+    except AIProviderError:
+        raise            # handled in main.py with an actionable message
     except Exception as e:
         log.exception("ai_verdict failed for finding %s", finding_id)
         raise HTTPException(502, f"AI verdict failed: {e}")
@@ -836,7 +833,7 @@ def run_ai_verdict(
         ran_by=viewer.id,
         verdict=models.AIVerdict(verdict),
         rationale=rationale,
-        model=provider_keys.anthropic_model,
+        model=provider.model,
     ))
     db.commit()
     db.refresh(f)

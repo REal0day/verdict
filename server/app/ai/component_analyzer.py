@@ -57,7 +57,9 @@ def analyze_component(
             parts.append(content)
     user = "\n".join(parts)
 
-    reply = get_provider().chat(_SYSTEM, [{"role": "user", "content": user}])
+    reply = get_provider().chat(
+        _SYSTEM, [{"role": "user", "content": user}], max_tokens=8192,
+    )
     return _parse(reply, archive_name)
 
 

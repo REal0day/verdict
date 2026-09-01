@@ -38,10 +38,19 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-opus-4-5"
     openai_api_key: str | None = None
     openai_model: str = "gpt-4o"
+    openai_base_url: str = "https://api.openai.com/v1"
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-1.5-pro"
     xai_api_key: str | None = None
     xai_model: str = "grok-2"
+    xai_base_url: str = "https://api.x.ai/v1"
+
+    # Self-hosted / local model speaking the OpenAI chat API (Ollama, vLLM,
+    # LM Studio, LiteLLM, OpenRouter). Set base_url to point at it; the key is
+    # optional because most local servers don't check one.
+    local_ai_base_url: str = ""
+    local_ai_model: str = ""
+    local_ai_api_key: str | None = None
 
     model_config = SettingsConfigDict(env_prefix="IRS_", env_file=".env", extra="ignore")
 
@@ -53,10 +62,15 @@ class ProviderKeys(BaseSettings):
     anthropic_model: str = "claude-opus-4-5"
     openai_api_key: str | None = None
     openai_model: str = "gpt-4o"
+    openai_base_url: str = "https://api.openai.com/v1"
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-1.5-pro"
     xai_api_key: str | None = None
     xai_model: str = "grok-2"
+    xai_base_url: str = "https://api.x.ai/v1"
+    local_ai_base_url: str = ""
+    local_ai_model: str = ""
+    local_ai_api_key: str | None = None
 
 
 settings = Settings()

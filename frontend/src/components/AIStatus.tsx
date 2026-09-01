@@ -13,7 +13,11 @@ import { api, ApiError } from "@/lib/api";
 export type AIStatus = {
   configured: boolean;
   provider: string;
+  display_name: string;
   model: string;
+  /** Is *any* provider usable? Distinguishes "nothing set up" from
+   *  "the active one isn't set up, but another is". */
+  any_configured: boolean;
 };
 
 export function useAIStatus() {
@@ -50,8 +54,19 @@ export function AIUnavailableNotice({ className = "" }: { className?: string }) 
     >
       <AlertTriangle size={14} className="mt-0.5 shrink-0 text-warning" />
       <span>
-        No {data.provider} API key is configured, so Claude can't answer yet.
-        An administrator can add one under <strong>Settings → AI</strong>.
+        {data.any_configured ? (
+          <>
+            The active AI provider ({data.display_name}) isn't configured, so
+            requests will fail. An administrator can switch to a configured
+            provider under <strong>Settings → AI</strong>.
+          </>
+        ) : (
+          <>
+            No AI provider is configured yet, so the assistant can't answer. An
+            administrator can add a hosted provider's key — or point the server
+            at a local model — under <strong>Settings → AI</strong>.
+          </>
+        )}
       </span>
     </div>
   );
