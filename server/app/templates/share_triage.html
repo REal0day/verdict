@@ -1,0 +1,360 @@
+<!doctype html><html data-theme="light"><head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Verdict — Triage findings{% if scan %} · {{ scan.product or "scan" }}{% endif %}</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+<style>
+  body { max-width: 1100px; }
+  .sev { display:inline-block; padding:.1rem .5rem; border-radius:4px;
+         font-size:.75rem; font-weight:600; text-transform:uppercase; }
+  .sev-critical { background:#7f1d1d; color:#fff; }
+  .sev-high     { background:#b91c1c; color:#fff; }
+  .sev-medium   { background:#b45309; color:#fff; }
+  .sev-low      { background:#0e7490; color:#fff; }
+  .sev-info     { background:#64748b; color:#fff; }
+  .sev-unknown  { background:#64748b; color:#fff; }
+  .pill { display:inline-block; padding:.1rem .5rem; border-radius:4px;
+          font-size:.75rem; background:#e2e8f0; color:#334155; }
+  details.finding { border:1px solid var(--pico-muted-border-color);
+                    border-radius:6px; margin-bottom:1rem; padding:0; }
+  details.finding > summary { padding:.75rem 1rem; cursor:pointer;
+                              list-style:none; display:flex; gap:.75rem;
+                              align-items:center; flex-wrap:wrap; }
+  details.finding > summary::-webkit-details-marker { display:none; }
+  details.finding > summary .grow { flex:1; min-width:0; }
+  details.finding > div { padding:0 1rem 1rem; }
+  pre.box { background:#f1f5f9; color:#0f172a; padding:.75rem;
+            border-radius:4px; overflow-x:auto; white-space:pre-wrap;
+            font-size:.85rem; margin:.25rem 0 .75rem; }
+  .meta-row { display:flex; gap:1.5rem; flex-wrap:wrap; font-size:.85rem;
+              color:var(--pico-muted-color); }
+  .counts span { margin-right:1rem; }
+  .hidden-poc { padding:.5rem .75rem; border:1px dashed #94a3b8;
+                border-radius:4px; color:#475569; font-size:.85rem;
+                margin:.25rem 0 .75rem; background:#f8fafc; }
+  table.idx { font-size:.85rem; margin:0; }
+  table.idx td, table.idx th { padding:.35rem .5rem; }
+  table.idx tbody tr { cursor:pointer; }
+  table.idx tbody tr:hover, table.idx tbody tr:focus
+    { background:var(--pico-secondary-background); outline:none; }
+  table.idx tbody tr.done { opacity:.55; }
+  .idx-num { width:2.5rem; color:#64748b; text-align:right; }
+  .idx-wrap { max-height:24rem; overflow-y:auto; border:1px solid
+              var(--pico-muted-border-color); border-radius:6px; }
+  .idx-head { display:flex; align-items:center; justify-content:space-between;
+              gap:1rem; flex-wrap:wrap; margin-bottom:.5rem; }
+  .idx-head .btns button { width:auto; display:inline; margin:0 0 0 .5rem;
+                           padding:.25rem .75rem; font-size:.8rem; }
+  details.finding.hl { box-shadow:0 0 0 2px #2563eb; }
+  .topline { position:sticky; top:0; background:var(--pico-background-color);
+             padding:.5rem 0; z-index:5; font-size:.8rem; }
+  .topline a { margin-right:1rem; }
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(9rem,1fr));
+           gap:.75rem; margin:1rem 0 1.25rem; }
+  .stat { border:1px solid var(--pico-muted-border-color); border-radius:8px;
+          padding:1rem; text-align:center; background:#fff; }
+  .stat .n { display:block; font-size:2.25rem; font-weight:700; line-height:1; }
+  .stat .l { display:block; font-size:.7rem; text-transform:uppercase;
+             letter-spacing:.08em; color:#64748b; margin-top:.4rem; }
+  .stat-open { border-color:#f59e0b; background:#fffbeb; }
+  .stat-open .n { color:#d97706; }
+  .stat-tp   .n { color:#16a34a; }
+  .stat-fp   .n { color:#64748b; }
+  .stat-sbp  .n { color:#2563eb; }
+  .stat-dup  .n { color:#7c3aed; }
+</style>
+</head><body class="container">
+<main>
+
+{% if status != "active" %}
+  <article>
+    <h2>Link unavailable</h2>
+    {% if status == "invalid" %}
+      <p>This share link is invalid. Check the URL or ask the security
+         team for a new one.</p>
+    {% elif status == "expired" %}
+      <p>This share link has <strong>expired</strong>
+         {% if link and link.expires_at %}(on {{ link.expires_at.strftime("%Y-%m-%d") }}){% endif %}.
+         Ask the security team to generate a fresh one.</p>
+    {% elif status == "revoked" %}
+      <p>This share link has been <strong>revoked</strong>.</p>
+    {% endif %}
+    {% if err %}<p style="color:#c33"><strong>{{ err }}</strong></p>{% endif %}
+  </article>
+{% else %}
+
+  <header>
+    <h2 style="margin-bottom:.25rem">
+      Triage findings — {{ scan.product or "(unnamed product)" }}
+    </h2>
+    <div class="meta-row">
+      {% if scan.scan_target %}<span><strong>Target:</strong> <code>{{ scan.scan_target }}</code></span>{% endif %}
+      {% if scan.harness_used %}<span><strong>Harness:</strong> {{ scan.harness_used }}</span>{% endif %}
+      {% if scan.scan_by %}<span><strong>Scanned by:</strong> {{ scan.scan_by }}</span>{% endif %}
+      <span><strong>Findings:</strong> {{ findings|length }}</span>
+    </div>
+    <div class="stats">
+      <div class="stat stat-open">
+        <span class="n">{{ scan.untriaged }}</span>
+        <span class="l">Open / Untriaged</span>
+      </div>
+      <div class="stat stat-tp">
+        <span class="n">{{ scan.tp }}</span>
+        <span class="l">True Positive</span>
+      </div>
+      <div class="stat stat-fp">
+        <span class="n">{{ scan.fp }}</span>
+        <span class="l">False Positive</span>
+      </div>
+      <div class="stat stat-sbp">
+        <span class="n">{{ scan.sbp }}</span>
+        <span class="l">Secure by Policy</span>
+      </div>
+      <div class="stat stat-dup">
+        <span class="n">{{ scan.duplicates }}</span>
+        <span class="l">Duplicate</span>
+      </div>
+    </div>
+    <p><small>
+      You're viewing this scan via a share link
+      {% if link.label %}(<em>{{ link.label }}</em>){% endif %}.
+      For each finding below, mark whether it's a real issue
+      (<strong>true positive</strong>) or not (<strong>false positive</strong>),
+      and add any notes that would help the security team.
+      {% if link.expires_at %}This link expires on
+        <strong>{{ link.expires_at.strftime("%Y-%m-%d") }}</strong>.{% endif %}
+    </small></p>
+    {% if ok %}<p style="color:#22c55e"><strong>Saved.</strong></p>{% endif %}
+    {% if err %}<p style="color:#c33"><strong>{{ err }}</strong></p>{% endif %}
+  </header>
+
+  {% set reviewer = request.cookies.get("irs_share_reviewer", "") %}
+
+  {% macro short(s) -%}
+    {%- if s == "true_positive" -%}TP
+    {%- elif s == "false_positive" -%}FP
+    {%- elif s == "sbp" -%}SBP
+    {%- elif s == "duplicate" -%}Dup
+    {%- elif s == "fixed" -%}Fixed
+    {%- else -%}Open{%- endif -%}
+  {%- endmacro %}
+
+  {% if findings|length == 0 %}
+    <article><p><em>No findings on this scan yet.</em></p></article>
+  {% else %}
+  <article id="overview">
+    <div class="idx-head">
+      <h4 style="margin:0">All findings
+        (<span id="idx-count">{{ findings|length }}</span>)</h4>
+      <span class="btns">
+        <label style="display:inline;margin:0">
+          <select id="filter-assignee" onchange="applyFilter()"
+                  style="display:inline;width:auto;margin:0;padding:.25rem .5rem;font-size:.8rem">
+            <option value="">All assignees</option>
+            <option value="__none__">Unassigned</option>
+            {% for a in assignees %}
+              <option value="{{ a }}">{{ a }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <button type="button" class="secondary" onclick="setAll(true)">Expand all</button>
+        <button type="button" class="secondary" onclick="setAll(false)">Collapse all</button>
+      </span>
+    </div>
+    <p style="margin:.25rem 0 .5rem"><small style="color:#64748b">
+      Click a row (or ↑/↓ then Enter) to jump to it. Use the dropdown to
+      filter by who it's assigned to.
+    </small></p>
+    <div class="idx-wrap">
+      <table class="idx" role="grid">
+        <thead><tr>
+          <th class="idx-num">#</th><th>Severity</th><th>Title</th>
+          <th>CWE</th><th>Assigned</th><th>Verdict</th>
+        </tr></thead>
+        <tbody id="idx-body">
+        {% for f in findings %}
+          {% set asg = (f.assigned_to or "").strip() %}
+          <tr tabindex="0" data-target="f-{{ f.id }}"
+              data-assignee="{{ asg }}"
+              class="{% if f.status.value != 'open' %}done{% endif %}"
+              onclick="jump('f-{{ f.id }}')"
+              onkeydown="idxKey(event, this)">
+            <td class="idx-num">{{ loop.index }}</td>
+            <td><span class="sev sev-{{ f.severity.value }}">{{ f.severity.value }}</span></td>
+            <td>{{ f.title or "(untitled finding)" }}</td>
+            <td><small>{{ f.cwe or "" }}</small></td>
+            <td><small>{{ asg or "—" }}</small></td>
+            <td><span class="pill">{{ short(f.status.value) }}</span></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </article>
+  {% endif %}
+
+  <datalist id="assignee-list">
+    {% for a in assignees %}<option value="{{ a }}">{% endfor %}
+  </datalist>
+
+  <div class="topline">
+    <a href="#overview">↑ Back to overview</a>
+    <a href="#" onclick="setAll(true);return false">Expand all</a>
+    <a href="#" onclick="setAll(false);return false">Collapse all</a>
+  </div>
+
+  {% for f in findings %}
+    {% set asg = (f.assigned_to or "").strip() %}
+    <details class="finding" id="f-{{ f.id }}" data-assignee="{{ asg }}">
+      <summary>
+        <span style="color:#64748b;min-width:2rem">#{{ loop.index }}</span>
+        <span class="sev sev-{{ f.severity.value }}">{{ f.severity.value }}</span>
+        <span class="grow"><strong>{{ f.title or "(untitled finding)" }}</strong>
+          {% if f.cwe %}<small style="color:#64748b"> · {{ f.cwe }}</small>{% endif %}
+        </span>
+        {% if asg %}<span class="pill" title="Assigned to">@ {{ asg }}</span>{% endif %}
+        <span class="pill">{{ short(f.status.value) }}</span>
+      </summary>
+      <div>
+        {% if f.affected_component %}
+          <p><small><strong>Affected:</strong> <code>{{ f.affected_component }}</code></small></p>
+        {% endif %}
+
+        {% if f.description %}
+          <strong>Description</strong>
+          <pre class="box">{{ f.description }}</pre>
+        {% endif %}
+
+        {% if f.steps_to_reproduce %}
+          <strong>Steps to reproduce</strong>
+          <pre class="box">{{ f.steps_to_reproduce }}</pre>
+        {% endif %}
+
+        {% if link.allow_poc %}
+          {% if f.proof_of_concept %}
+            <strong>Proof of concept</strong>
+            <pre class="box">{{ f.proof_of_concept }}</pre>
+          {% endif %}
+        {% elif f.proof_of_concept %}
+          <div class="hidden-poc">
+            Proof-of-concept hidden on this share link. Ask the security
+            team if you need it.
+          </div>
+        {% endif %}
+
+        {% if f.remediation %}
+          <strong>Suggested remediation</strong>
+          <pre class="box">{{ f.remediation }}</pre>
+        {% endif %}
+
+        {% if f.references %}
+          <p><small><strong>References:</strong><br>
+            {% for ref in f.references.splitlines() %}
+              {%- if ref.strip() -%}{{ ref.strip() }}<br>{%- endif -%}
+            {% endfor %}
+          </small></p>
+        {% endif %}
+
+        <form method="post" action="/share/{{ token }}/findings/{{ f.id }}">
+          <div class="grid">
+            <label>Verdict
+              <select name="status">
+                {% for s in statuses %}
+                  <option value="{{ s.value }}"
+                          {% if f.status == s %}selected{% endif %}>
+                    {%- if s.value == "open" -%}Open / not yet reviewed
+                    {%- elif s.value == "true_positive" -%}True positive — real issue
+                    {%- elif s.value == "false_positive" -%}False positive — not a real issue
+                    {%- elif s.value == "sbp" -%}Secure-by-policy / accepted risk
+                    {%- elif s.value == "duplicate" -%}Duplicate of another finding
+                    {%- else -%}{{ s.value }}{%- endif -%}
+                  </option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>Assigned to <small>(who on your team owns this?)</small>
+              <input name="assigned_to" value="{{ asg }}"
+                     list="assignee-list" maxlength="255"
+                     placeholder="name or email">
+            </label>
+            <label>Your name / email <small>(for attribution)</small>
+              <input name="reviewer" value="{{ reviewer }}"
+                     placeholder="e.g. jdoe@example.com" maxlength="120">
+            </label>
+          </div>
+          <label>Notes
+            <textarea name="dev_notes" rows="3"
+                      placeholder="Why is this TP/FP? Anything the security team should know?">{{ f.dev_notes }}</textarea>
+          </label>
+          <button type="submit">Save verdict</button>
+          {% if f.triaged_by %}
+            <small style="margin-left:1rem;color:#64748b">
+              Last set by {{ f.triaged_by }}
+              {% if f.triaged_at %}on {{ f.triaged_at.strftime("%Y-%m-%d %H:%M") }}{% endif %}
+            </small>
+          {% endif %}
+        </form>
+      </div>
+    </details>
+  {% endfor %}
+
+  <script>
+    function setAll(open) {
+      document.querySelectorAll("details.finding")
+              .forEach(function (d) { d.open = open; });
+    }
+    function jump(id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      el.open = true;
+      document.querySelectorAll("details.finding.hl")
+              .forEach(function (d) { d.classList.remove("hl"); });
+      el.classList.add("hl");
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      var first = el.querySelector("select, textarea, input");
+      if (first) setTimeout(function () { first.focus({ preventScroll: true }); }, 250);
+    }
+    function applyFilter() {
+      var sel = document.getElementById("filter-assignee").value;
+      var match = function (a) {
+        if (sel === "") return true;
+        if (sel === "__none__") return a === "";
+        return a === sel;
+      };
+      var n = 0;
+      document.querySelectorAll("#idx-body tr").forEach(function (r) {
+        var ok = match(r.dataset.assignee || "");
+        r.style.display = ok ? "" : "none";
+        if (ok) n++;
+      });
+      document.querySelectorAll("details.finding").forEach(function (d) {
+        d.style.display = match(d.dataset.assignee || "") ? "" : "none";
+      });
+      var c = document.getElementById("idx-count");
+      if (c) c.textContent = n;
+    }
+    function idxKey(ev, row) {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault(); jump(row.dataset.target);
+      } else if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+        ev.preventDefault();
+        var sib = row;
+        do {
+          sib = ev.key === "ArrowDown" ? sib.nextElementSibling
+                                       : sib.previousElementSibling;
+        } while (sib && sib.style.display === "none");
+        if (sib) { sib.focus(); sib.scrollIntoView({ block: "nearest" }); }
+      }
+    }
+    // After a save redirect (#f-<id>), make sure that finding is open + visible.
+    (function () {
+      var h = location.hash.slice(1);
+      if (h && document.getElementById(h)) jump(h);
+      var first = document.querySelector("#idx-body tr");
+      if (first && !h) first.focus();
+    })();
+  </script>
+
+{% endif %}
+</main></body></html>

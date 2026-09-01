@@ -1,0 +1,70 @@
+<!doctype html><html data-theme="dark"><head><title>Verdict — Runs</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  table { table-layout: fixed; width: 100%; }
+  td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .state-draft     { color: #b58900; font-weight:600; }
+  .state-confirmed { color: #2aa198; font-weight:600; }
+</style>
+</head><body class="container">
+<nav>
+  <ul>
+    <li><strong>Verdict</strong></li>
+    <li><a href="/">Reports</a></li>
+    <li>Runs</li>
+    <li><a href="/ui/scans">Scans</a></li>
+    <li><a href="/ui/projects">Projects</a></li>
+    <li><a href="/ui/agent">Agents</a></li>
+  </ul>
+  <ul><li>{{ user.email }} ({{ user.role.value }})</li><li><a href="/ui/logout">logout</a></li></ul>
+</nav>
+
+<h3>Runs</h3>
+<p><small>One row per Claude Code session. Files written within the same
+session are grouped here automatically (via the PostToolUse hook).</small></p>
+
+{% if runs %}
+<table>
+<thead><tr>
+  <th>Title</th>
+  <th>Project</th>
+  <th style="width:5em">Files</th>
+  <th>Uploaded by</th>
+  <th>Hostname</th>
+  <th>Last seen</th>
+  <th>Derived scan</th>
+</tr></thead>
+<tbody>
+{% for run in runs %}
+<tr>
+  <td>
+    <a href="/ui/runs/{{ run.session_id }}">
+      {{ run.title or "(untitled)" }}
+    </a>
+    <br><small><code title="{{ run.session_id }}">{{ run.session_id[:12] }}…</code></small>
+  </td>
+  <td>
+    {% if run.project %}
+      <a href="/ui/projects/{{ run.project.id }}">{{ run.project.name }}</a>
+    {% else %}<small>—</small>{% endif %}
+  </td>
+  <td>{{ run.file_count }}</td>
+  <td>{{ run.owner_email or "—" }}</td>
+  <td>{{ run.hostname or "—" }}</td>
+  <td><small>{{ run.last_seen.strftime("%Y-%m-%d %H:%M") }}</small></td>
+  <td>
+    {% if run.scan %}
+      <a href="/ui/scans/{{ run.scan.id }}">{{ run.scan.product or "(unnamed)" }}</a>
+      <small class="state-{{ run.scan.state.value }}">[{{ run.scan.state.value }}]</small>
+    {% else %}<small>—</small>{% endif %}
+  </td>
+</tr>
+{% endfor %}
+</tbody></table>
+{% else %}
+<article><em>No grouped runs yet. Files uploaded through the Claude Code
+hook will appear here grouped by session.</em></article>
+{% endif %}
+
+</body></html>

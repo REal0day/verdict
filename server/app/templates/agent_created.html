@@ -1,0 +1,45 @@
+<!doctype html><html data-theme="dark"><head><title>Verdict — Agent created</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+<link rel="stylesheet" href="/static/app.css">
+</head><body class="container">
+<nav>
+  <ul>
+    <li><strong>Verdict</strong></li>
+    <li><a href="/">Reports</a></li>
+    <li><a href="/ui/runs">Runs</a></li>
+    <li><a href="/ui/scans">Scans</a></li>
+    <li><a href="/ui/projects">Projects</a></li>
+    <li><a href="/ui/agent">Agents</a></li>
+  </ul>
+  <ul><li>{{ user.email }} ({{ user.role.value }})</li><li><a href="/ui/logout">logout</a></li></ul>
+</nav>
+
+<article>
+<h3>Agent created — save this key now</h3>
+<p>This is the <strong>only time</strong> the API key is shown. The server
+stores only its hash, so it cannot be recovered. If you lose it, mint a
+new agent.</p>
+
+<p><strong>Hostname:</strong> <code>{{ agent.hostname }}</code><br>
+<strong>Agent id:</strong> <code>{{ agent.id }}</code></p>
+
+<label>API key (one-time)</label>
+<input type="text" value="{{ api_key }}" readonly
+       onclick="this.select()" style="font-family:monospace">
+
+<p style="margin-top:1.5em">
+  <a href="/ui/agent/install.sh?agent_id={{ agent.id }}&api_key={{ api_key }}"
+     role="button">
+    Download install script (Linux)
+  </a>
+</p>
+
+<p>On the target Linux machine, run this one line — it installs, starts, and
+registers the agent for boot:</p>
+<pre style="white-space:pre-wrap">curl -fsSL "{{ server_url }}/ui/agent/install.sh?agent_id={{ agent.id }}&api_key={{ api_key }}" | bash</pre>
+<p>(Or download with the button above and scp it across.)</p>
+
+<p><a href="/ui/agent">&laquo; back to agents</a></p>
+</article>
+
+</body></html>

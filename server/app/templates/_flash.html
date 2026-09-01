@@ -1,0 +1,8 @@
+{% set _ok = request.query_params.get('ok') %}
+{% if _ok %}
+<div class="flash" id="flash-banner">
+  <span>{{ _ok }}</span>
+  <button type="button" class="close" onclick="document.getElementById('flash-banner').remove()">×</button>
+</div>
+<script>setTimeout(() => { const el = document.getElementById('flash-banner'); if (el) el.remove(); }, 4000);</script>
+{% endif %}

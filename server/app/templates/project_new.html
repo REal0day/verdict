@@ -1,0 +1,26 @@
+<!doctype html><html data-theme="dark"><head><title>Verdict — New project</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+<link rel="stylesheet" href="/static/app.css">
+</head><body class="container">
+<nav>
+  <ul>
+    <li><strong>Verdict</strong></li>
+    <li><a href="/">Reports</a></li>
+    <li><a href="/ui/runs">Runs</a></li>
+    <li><a href="/ui/scans">Scans</a></li>
+    <li><a href="/ui/projects">Projects</a></li>
+    <li><a href="/ui/agent">Agents</a></li>
+  </ul>
+  <ul><li>{{ user.email }} ({{ user.role.value }})</li><li><a href="/ui/logout">logout</a></li></ul>
+</nav>
+
+<h3>New project</h3>
+<form method="post" action="/ui/projects/new">
+  <label>Name <input name="name" required autofocus></label>
+  <label>Description <textarea name="description" rows="3"></textarea></label>
+  <button type="submit">Create project</button>
+  <a href="/ui/projects" role="button" class="secondary">Cancel</a>
+</form>
+<p><small>You'll be added as the first member. Add more from the project page.</small></p>
+
+</body></html>

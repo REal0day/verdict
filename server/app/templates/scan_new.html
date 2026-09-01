@@ -1,0 +1,61 @@
+<!doctype html><html data-theme="dark"><head><title>Verdict — New scan</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+<link rel="stylesheet" href="/static/app.css">
+</head><body class="container">
+<nav>
+  <ul>
+    <li><strong>Verdict</strong></li>
+    <li><a href="/">Reports</a></li>
+    <li><a href="/ui/runs">Runs</a></li>
+    <li><a href="/ui/scans">Scans</a></li>
+    <li><a href="/ui/projects">Projects</a></li>
+    <li><a href="/ui/agent">Agents</a></li>
+  </ul>
+  <ul><li>{{ user.email }} ({{ user.role.value }})</li><li><a href="/ui/logout">logout</a></li></ul>
+</nav>
+
+<h3>New vulnerability scan</h3>
+<form method="post" action="/ui/scans/new">
+  <div class="grid">
+    <label>Product <input name="product" required></label>
+    <label>Scan target <input name="scan_target"></label>
+  </div>
+  <div class="grid">
+    <label>Harness used <input name="harness_used"></label>
+    <label>Scan by <input name="scan_by" value="{{ user.email }}"></label>
+  </div>
+  <div class="grid">
+    <label>Results file <input name="results_file" placeholder="path/URL"></label>
+    <label>Spreadsheet link <input name="spreadsheet_link"></label>
+  </div>
+  <label>Triaged by <input name="triaged_by"></label>
+
+  <fieldset>
+    <legend>Counts</legend>
+    <div class="grid">
+      <label>Findings <input name="findings" type="number" value="0"></label>
+      <label>TP <input name="tp" type="number" value="0"></label>
+      <label>FP <input name="fp" type="number" value="0"></label>
+    </div>
+    <div class="grid">
+      <label>SBP <input name="sbp" type="number" value="0"></label>
+      <label>Duplicates <input name="duplicates" type="number" value="0"></label>
+      <label>Untriaged <input name="untriaged" type="number" value="0"></label>
+    </div>
+  </fieldset>
+
+  <label>Highest severity
+    <select name="highest_severity">
+      {% for sev in severities %}
+      <option value="{{ sev.value }}" {% if sev.value == 'unknown' %}selected{% endif %}>{{ sev.value }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label>Notes <textarea name="notes" rows="3"></textarea></label>
+
+  <button type="submit">Create scan</button>
+  <a href="/ui/scans" role="button" class="secondary">Cancel</a>
+</form>
+
+</body></html>

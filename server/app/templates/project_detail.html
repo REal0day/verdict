@@ -1,0 +1,149 @@
+<!doctype html><html data-theme="dark"><head><title>Verdict — {{ project.name }}</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  table { table-layout: fixed; width: 100%; }
+  td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .meta  { color: var(--pico-muted-color); font-size: 0.9em; }
+</style>
+</head><body class="container">
+<nav>
+  <ul>
+    <li><strong>Verdict</strong></li>
+    <li><a href="/">Reports</a></li>
+    <li><a href="/ui/runs">Runs</a></li>
+    <li><a href="/ui/scans">Scans</a></li>
+    <li><a href="/ui/projects">Projects</a></li>
+    <li><a href="/ui/agent">Agents</a></li>
+  </ul>
+  <ul><li>{{ user.email }} ({{ user.role.value }})</li><li><a href="/ui/logout">logout</a></li></ul>
+</nav>
+
+{% include "_flash.html" %}
+
+
+<header>
+  <p class="meta"><a href="/ui/projects">&laquo; back to projects</a></p>
+  <h3>{{ project.name }}</h3>
+  <p class="meta">
+    created {{ project.created_at.strftime("%Y-%m-%d") }}
+    {% if project.description %} · {{ project.description }}{% endif %}
+  </p>
+  {% if error %}<p style="color:#c33"><strong>{{ error }}</strong></p>{% endif %}
+</header>
+
+{% if can_edit %}
+<article>
+  <h4>Project info</h4>
+  <form method="post" action="/ui/projects/{{ project.id }}/edit">
+    <label>Name <input name="name" value="{{ project.name }}" required></label>
+    <label>Description <textarea name="description" rows="2">{{ project.description }}</textarea></label>
+    <button type="submit">Save</button>
+  </form>
+</article>
+{% endif %}
+
+{% if not show_contents %}
+<article>
+  <h4>Members & contents are hidden</h4>
+  <p class="meta">You're not a member of this project. Ask the owner to add you.</p>
+</article>
+{% else %}
+<article>
+<h4>Members ({{ members|length }})</h4>
+<table>
+<thead><tr><th>Email</th>{% if can_edit %}<th style="width:7em"></th>{% endif %}</tr></thead>
+<tbody>
+{% for m in members %}
+<tr>
+  <td>{{ m.email }}</td>
+  {% if can_edit %}
+  <td>
+    {% if m.id != project.created_by %}
+    <form method="post" action="/ui/projects/{{ project.id }}/members/{{ m.id }}/remove"
+          onsubmit="return confirm('Remove {{ m.email }} from this project?')" style="margin:0">
+      <button type="submit" class="secondary outline" style="padding:.1em .5em">remove</button>
+    </form>
+    {% else %}<small class="meta">creator</small>{% endif %}
+  </td>
+  {% endif %}
+</tr>
+{% endfor %}
+</tbody></table>
+
+{% if can_edit %}
+<form method="post" action="/ui/projects/{{ project.id }}/members/add" style="margin-top:1em">
+  <div class="grid">
+    <input name="email" type="email" placeholder="user@example.com" required>
+    <button type="submit">Add member</button>
+  </div>
+</form>
+{% endif %}
+</article>
+
+<article>
+<h4>Runs in this project ({{ runs|length }})</h4>
+{% if runs %}
+<table>
+<thead><tr><th>Title</th><th>Session</th><th>Created</th></tr></thead>
+<tbody>
+{% for run in runs %}
+<tr>
+  <td><a href="/ui/runs/{{ run.session_id }}">{{ run.title or "(untitled)" }}</a></td>
+  <td><small><code>{{ run.session_id[:12] }}…</code></small></td>
+  <td><small>{{ run.created_at.strftime("%Y-%m-%d %H:%M") }}</small></td>
+</tr>
+{% endfor %}
+</tbody></table>
+{% else %}
+<p><em>No runs in this project yet. From any run page, pick this project from the dropdown.</em></p>
+{% endif %}
+</article>
+
+{% if direct_scans %}
+<article>
+<h4>Scans attached to this project ({{ direct_scans|length }})</h4>
+<small class="meta">Scans directly attached. Scans owned by runs in this project show up under the run.</small>
+<table>
+<thead><tr><th>Product</th><th>State</th><th>Highest sev</th><th>Findings</th><th>When</th></tr></thead>
+<tbody>
+{% for s in direct_scans %}
+<tr>
+  <td><a href="/ui/scans/{{ s.id }}">{{ s.product or "(unnamed)" }}</a></td>
+  <td><small>{{ s.state.value }}</small></td>
+  <td><small>{{ s.highest_severity.value }}</small></td>
+  <td>{{ s.findings }}</td>
+  <td><small>{{ s.created_at.strftime("%Y-%m-%d %H:%M") }}</small></td>
+</tr>
+{% endfor %}
+</tbody></table>
+</article>
+{% endif %}
+
+{% if direct_reports %}
+<article>
+<h4>Reports attached to this project ({{ direct_reports|length }})</h4>
+<small class="meta">Reports directly attached. Reports inside runs in this project show up under the run.</small>
+<table>
+<thead><tr><th>File</th><th>When</th></tr></thead>
+<tbody>
+{% for r in direct_reports %}
+<tr>
+  <td><a href="/ui/reports/{{ r.id }}">{{ r.filename }}</a></td>
+  <td><small>{{ r.created_at.strftime("%Y-%m-%d %H:%M") }}</small></td>
+</tr>
+{% endfor %}
+</tbody></table>
+</article>
+{% endif %}
+{% endif %}{# show_contents #}
+
+{% if can_edit and project.created_by == user.id or user.role.value == "admin" %}
+<form method="post" action="/ui/projects/{{ project.id }}/delete"
+      onsubmit="return confirm('Delete project {{ project.name }}? Member access goes away; reports/runs stay.')"
+      style="margin-top:1.5em">
+  <button type="submit" class="secondary outline">Delete project</button>
+</form>
+{% endif %}
+
+</body></html>

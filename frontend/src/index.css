@@ -1,0 +1,97 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Theme tokens — comma-separated RGB so Tailwind's `rgb(var(--x) / <alpha>)` works. */
+@layer base {
+  :root {
+    --bg:        250 250 251;
+    --surface:   255 255 255;
+    --muted:     244 244 246;
+    --border:    228 228 232;
+    --fg:         17  19  23;
+    --fg-muted:  100 105 115;
+    --primary:    99  102 241;
+    --primary-fg: 250 250 251;
+    --danger:    220  38  38;
+    --success:    16 153 105;
+    --warning:   202 138   4;
+  }
+
+  .dark {
+    --bg:         10  10  14;
+    --surface:    20  22  28;
+    --muted:      28  30  38;
+    --border:     38  41  50;
+    --fg:        236 238 244;
+    --fg-muted:  148 156 172;
+    --primary:   129 140 248;
+    --primary-fg: 17  19  23;
+    --danger:    248 113 113;
+    --success:    52 211 153;
+    --warning:   251 191  36;
+  }
+
+  html, body, #root { height: 100%; }
+  body { font-feature-settings: "ss01", "cv11"; }
+}
+
+/* Markdown content rendered by react-markdown — minimal "prose" style
+   tuned to the dark theme. Plays the role @tailwindcss/typography would
+   without adding the plugin. */
+.prose-irs {
+  color: rgb(var(--fg));
+  font-size: 0.95rem;
+  line-height: 1.65;
+}
+.prose-irs h1 { font-size: 1.6rem; font-weight: 600; margin: 1.2rem 0 .6rem; }
+.prose-irs h2 { font-size: 1.3rem; font-weight: 600; margin: 1.1rem 0 .5rem; }
+.prose-irs h3 { font-size: 1.1rem; font-weight: 600; margin: 1rem   0 .4rem; }
+.prose-irs h4 { font-size: 1rem;   font-weight: 600; margin: .9rem  0 .3rem; }
+.prose-irs p  { margin: .5rem 0; }
+.prose-irs ul, .prose-irs ol { padding-left: 1.4rem; margin: .5rem 0; }
+.prose-irs li { margin: .25rem 0; }
+.prose-irs li > p { margin: .15rem 0; }
+.prose-irs strong { color: rgb(var(--fg)); font-weight: 600; }
+.prose-irs em { color: rgb(var(--fgmuted)); }
+.prose-irs a  { color: rgb(var(--primary)); }
+.prose-irs a:hover { text-decoration: underline; }
+.prose-irs code:not(pre code) {
+  background: rgb(var(--muted));
+  border: 1px solid rgb(var(--border));
+  padding: 1px 5px; font-size: .85em; border-radius: 4px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+.prose-irs pre {
+  background: rgb(var(--muted));
+  border: 1px solid rgb(var(--border));
+  border-radius: 6px;
+  padding: .8rem 1rem;
+  overflow: auto;
+  font-size: .85em;
+}
+.prose-irs blockquote {
+  border-left: 3px solid rgb(var(--border));
+  padding-left: 1rem;
+  color: rgb(var(--fgmuted));
+  margin: .8rem 0;
+}
+.prose-irs table {
+  width: 100%; border-collapse: collapse; margin: .8rem 0;
+  font-size: .9em;
+}
+.prose-irs th, .prose-irs td {
+  border: 1px solid rgb(var(--border));
+  padding: .35rem .6rem;
+  text-align: left;
+}
+.prose-irs th { background: rgba(var(--muted) / .6); font-weight: 600; }
+.prose-irs hr { border: 0; border-top: 1px solid rgb(var(--border)); margin: 1.25rem 0; }
+
+/* Severity chips share the same palette regardless of theme. */
+.sev-critical { background: rgb(127 29 29); color: white; }
+.sev-high     { background: rgb(185 28 28); color: white; }
+.sev-medium   { background: rgb(180 83 9);  color: white; }
+.sev-low      { background: rgb(22 101 52); color: white; }
+.sev-info     { background: rgb(30 64 175); color: white; }
+.sev-unknown  { background: rgb(75 85 99);  color: white; }

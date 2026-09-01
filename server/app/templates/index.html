@@ -1,0 +1,86 @@
+<!doctype html><html data-theme="dark"><head><title>Verdict — Reports</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+<link rel="stylesheet" href="/static/app.css">
+<script src="https://unpkg.com/htmx.org@1.9.12"></script>
+<style>
+  /* Keep table rows on one line; truncate the summary with ellipsis so other
+     columns stay readable. Hover the cell to see the full text via tooltip. */
+  table { table-layout: fixed; width: 100%; }
+  td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  td.summary-cell { max-width: 0; }   /* lets ellipsis kick in inside flex/grid table */
+</style>
+</head><body class="container">
+<nav>
+  <ul>
+    <li><strong>Verdict</strong></li>
+    <li>Reports</li>
+    <li><a href="/ui/runs">Runs</a></li>
+    <li><a href="/ui/scans">Scans</a></li>
+    <li><a href="/ui/projects">Projects</a></li>
+    <li><a href="/ui/agent">Agents</a></li>
+  </ul>
+  <ul><li>{{ user.email }} ({{ user.role.value }})</li><li><a href="/ui/logout">logout</a></li></ul>
+</nav>
+
+<h3>Reports</h3>
+<table>
+<thead><tr>
+  <th style="width:2.5em">
+    <input type="checkbox" id="select-all" title="Select all"
+           onchange="document.querySelectorAll('.report-cb').forEach(c => { c.checked = this.checked; }); updateSelectedCount();">
+  </th>
+  <th>File</th><th>Tool</th><th>Uploaded by</th><th>Hostname</th><th>When</th><th>Summary</th>
+</tr></thead>
+<tbody>
+{% for row in rows %}
+<tr>
+  <td><input type="checkbox" class="report-cb" value="{{ row.r.id }}" onchange="updateSelectedCount()"></td>
+  <td><a href="/ui/reports/{{ row.r.id }}">{{ row.r.filename }}</a></td>
+  <td>{{ row.r.source_tool.value }}</td>
+  <td>{{ row.r.user.email if row.r.user else "—" }}</td>
+  <td>{{ row.r.agent.hostname if row.r.agent else "—" }}</td>
+  <td>{{ row.r.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+  <td class="summary-cell" title="{{ row.summary }}"><small>{{ row.summary }}</small></td>
+</tr>
+{% endfor %}
+</tbody></table>
+
+<article>
+<h4>Ask Claude about your reports</h4>
+<p><small id="chat-scope">No reports selected — Claude will answer using only your message.</small></p>
+<form hx-post="/ui/chat" hx-target="#chat-out" hx-swap="beforeend"
+      hx-vals='js:{report_ids: collectCheckedReportIds()}'
+      hx-on::after-request="if(event.detail.successful) this.querySelector('textarea').value=''">
+  <textarea name="message" placeholder="Ask a question, or 'generate a weekly summary' over the selected reports..." required></textarea>
+  <label><input type="checkbox" name="save_as_report" value="1"> Save reply as a new report</label>
+  <button type="submit">Send</button>
+  <button type="button" class="secondary outline"
+          onclick="document.querySelectorAll('.report-cb, #select-all').forEach(c => c.checked = false); updateSelectedCount();">
+    Clear selection
+  </button>
+</form>
+<div id="chat-out"></div>
+</article>
+
+<script>
+function collectCheckedReportIds() {
+  return Array.from(document.querySelectorAll('.report-cb:checked'))
+    .map(c => c.value).join(',');
+}
+function updateSelectedCount() {
+  const n = document.querySelectorAll('.report-cb:checked').length;
+  const total = document.querySelectorAll('.report-cb').length;
+  const el = document.getElementById('chat-scope');
+  if (n === 0) {
+    el.textContent = 'No reports selected — Claude will answer using only your message.';
+  } else if (n === total) {
+    el.textContent = `All ${n} reports selected — Claude will answer over the full set.`;
+  } else {
+    el.textContent = `${n} report${n === 1 ? '' : 's'} selected — Claude will answer over those.`;
+  }
+  // Sync the header "select all" state with row state.
+  const all = document.getElementById('select-all');
+  if (all) all.checked = (n > 0 && n === total);
+}
+</script>
+</body></html>

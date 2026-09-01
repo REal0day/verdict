@@ -1,0 +1,93 @@
+<!doctype html><html data-theme="dark"><head><title>Verdict — {{ r.filename }}</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  .meta { color: var(--pico-muted-color); font-size: 0.9em; }
+  .summary { background: var(--pico-card-background-color);
+             border-left: 3px solid var(--pico-primary);
+             padding: .6em 1em; margin: 1em 0; }
+  article.report pre { white-space: pre-wrap; word-break: break-word; }
+  .state-draft     { color: #b58900; font-weight:600; }
+  .state-confirmed { color: #2aa198; font-weight:600; }
+</style>
+</head><body class="container">
+<nav>
+  <ul>
+    <li><strong>Verdict</strong></li>
+    <li><a href="/">Reports</a></li>
+    <li><a href="/ui/runs">Runs</a></li>
+    <li><a href="/ui/scans">Scans</a></li>
+    <li><a href="/ui/projects">Projects</a></li>
+    <li><a href="/ui/agent">Agents</a></li>
+  </ul>
+  <ul><li>{{ user.email }} ({{ user.role.value }})</li><li><a href="/ui/logout">logout</a></li></ul>
+</nav>
+
+{% include "_flash.html" %}
+
+
+<header>
+  <h3>{{ r.filename }}</h3>
+  <p class="meta">
+    {{ r.source_tool.value }} ·
+    uploaded {{ r.created_at.strftime("%Y-%m-%d %H:%M UTC") }} ·
+    {{ r.size_bytes }} bytes
+    · <a href="/ui/reports/{{ r.id }}/download">Download raw</a>
+    · <a href="/">&laquo; back</a>
+  </p>
+</header>
+
+{% if r.session_id %}
+<div class="summary">
+  <strong>Part of run:</strong> <code>{{ r.session_id[:12] }}…</code>
+  <a href="/ui/runs/{{ r.session_id }}" role="button" class="secondary outline"
+     style="float:right; padding:.1em .8em; margin-top:-.3em">View run &raquo;</a>
+</div>
+{% endif %}
+
+<article>
+<h4>Project</h4>
+{% if r.project %}
+  <p>Directly attached to <a href="/ui/projects/{{ r.project.id }}">{{ r.project.name }}</a>.</p>
+{% else %}
+  <p><em>Not directly attached to a project.</em>
+  {% if r.session_id %}<small>(The report's run can also carry a project — set it from
+    <a href="/ui/runs/{{ r.session_id }}">the run page</a>.)</small>{% endif %}</p>
+{% endif %}
+{% if user.id == r.user_id or user.role.value == 'admin' %}
+<form method="post" action="/ui/reports/{{ r.id }}/project" style="display:flex; gap:.5em; align-items:end">
+  <label style="flex:1; margin:0">
+    <select name="project_id">
+      <option value="">— none —</option>
+      {% for p in my_projects %}
+      <option value="{{ p.id }}" {% if r.project_id == p.id %}selected{% endif %}>{{ p.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button type="submit">Save project</button>
+</form>
+{% if not my_projects %}<small><a href="/ui/projects/new">Create a project</a> first to attach this report.</small>{% endif %}
+{% endif %}
+</article>
+
+{% if derived_scan %}
+<div class="summary" style="border-left-color:#b58900">
+  <strong>Auto-extracted draft:</strong>
+  a <span class="state-{{ derived_scan.state.value }}">{{ derived_scan.state.value }}</span>
+  VulnScan was generated from this report.
+  <a href="/ui/scans/{{ derived_scan.id }}" role="button" class="secondary outline"
+     style="float:right; padding:.1em .8em; margin-top:-.3em">
+    Review draft &raquo;
+  </a>
+</div>
+{% endif %}
+
+{% if summary %}
+<div class="summary"><strong>AI summary:</strong> {{ summary }}</div>
+{% endif %}
+
+<article class="report">
+  {{ body_html | safe }}
+</article>
+
+</body></html>

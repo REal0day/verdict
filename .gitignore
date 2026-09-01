@@ -1,0 +1,27 @@
+__pycache__/
+*.pyc
+.env
+.env.bak.*
+*.sqlite3
+.venv/
+.smokeenv/
+dist/
+build/
+*.egg-info/
+agent/irs_agent/.state.json
+
+# frontend (only present after a build; never committed)
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# editor / OS noise
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# server data export / restore bundle — NEVER commit.
+# Holds env.secret (live IRS_ENCRYPTION_KEY + provider API keys), a full
+# Postgres dump, and the encrypted blob volume. See export/RESTORE.md.
+export/

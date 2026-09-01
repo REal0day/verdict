@@ -1,0 +1,76 @@
+<!doctype html><html data-theme="dark"><head><title>Verdict — Vuln Scans</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  .sev { padding:2px 8px; border-radius:4px; font-size:0.85em; }
+  .sev-critical { background:#7a1f1f; color:#fff; }
+  .sev-high     { background:#b94a48; color:#fff; }
+  .sev-medium   { background:#c5862e; color:#fff; }
+  .sev-low      { background:#3b7a3d; color:#fff; }
+  .sev-info     { background:#406b80; color:#fff; }
+  .sev-unknown  { background:#666;    color:#fff; }
+  .state-draft     { color: #b58900; font-weight:600; }
+  .state-confirmed { color: #2aa198; font-weight:600; }
+  table tbody tr td { vertical-align: middle; }
+</style>
+</head><body class="container">
+<nav>
+  <ul>
+    <li><strong>Verdict</strong></li>
+    <li><a href="/">Reports</a></li>
+    <li><a href="/ui/runs">Runs</a></li>
+    <li>Scans</li>
+    <li><a href="/ui/projects">Projects</a></li>
+    <li><a href="/ui/agent">Agents</a></li>
+  </ul>
+  <ul><li>{{ user.email }} ({{ user.role.value }})</li><li><a href="/ui/logout">logout</a></li></ul>
+</nav>
+
+<header style="display:flex; justify-content:space-between; align-items:baseline">
+  <h3>Vulnerability scans</h3>
+  <a href="/ui/scans/new" role="button">+ New scan</a>
+</header>
+
+<form method="get" action="/ui/scans" style="display:flex; gap:.5em; align-items:end; margin-bottom:1em">
+  <label style="flex:1">Product filter
+    <input name="product" value="{{ filter_product }}" placeholder="any">
+  </label>
+  <label>State
+    <select name="state">
+      <option value="">any</option>
+      {% for st in states %}
+      <option value="{{ st.value }}" {% if filter_state == st.value %}selected{% endif %}>{{ st.value }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button type="submit">Filter</button>
+</form>
+
+{% if scans %}
+<table>
+<thead><tr>
+  <th>Product</th><th>Target</th><th>Harness</th><th>Scan by</th>
+  <th>Findings</th><th>TP / FP / SBP</th><th>Untriaged</th><th>Highest sev</th>
+  <th>State</th><th>When</th>
+</tr></thead>
+<tbody>
+{% for s in scans %}
+<tr>
+  <td><a href="/ui/scans/{{ s.id }}">{{ s.product or "(unset)" }}</a></td>
+  <td><small>{{ s.scan_target }}</small></td>
+  <td>{{ s.harness_used }}</td>
+  <td><small>{{ s.scan_by }}</small></td>
+  <td>{{ s.findings }}</td>
+  <td>{{ s.tp }} / {{ s.fp }} / {{ s.sbp }}</td>
+  <td>{{ s.untriaged }}</td>
+  <td><span class="sev sev-{{ s.highest_severity.value }}">{{ s.highest_severity.value }}</span></td>
+  <td><span class="state-{{ s.state.value }}">{{ s.state.value }}</span></td>
+  <td><small>{{ s.created_at.strftime("%Y-%m-%d %H:%M") }}</small></td>
+</tr>
+{% endfor %}
+</tbody></table>
+{% else %}
+<article><em>No scans yet. <a href="/ui/scans/new">Create one</a> to get started.</em></article>
+{% endif %}
+
+</body></html>

@@ -1,0 +1,57 @@
+<!doctype html><html data-theme="dark"><head><title>Verdict — Agents</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+<link rel="stylesheet" href="/static/app.css">
+</head><body class="container">
+<nav>
+  <ul>
+    <li><strong>Verdict</strong></li>
+    <li><a href="/">Reports</a></li>
+    <li><a href="/ui/runs">Runs</a></li>
+    <li><a href="/ui/scans">Scans</a></li>
+    <li><a href="/ui/projects">Projects</a></li>
+    <li>Agents</li>
+  </ul>
+  <ul><li>{{ user.email }} ({{ user.role.value }})</li><li><a href="/ui/logout">logout</a></li></ul>
+</nav>
+
+<h3>Your agents</h3>
+
+{% if agents %}
+<table>
+<thead><tr><th>Hostname</th><th>Created</th><th>Last seen</th><th>Agent id</th></tr></thead>
+<tbody>
+{% for a in agents %}
+<tr>
+  <td>
+    <form method="post" action="/ui/agent/{{ a.id }}/rename"
+          style="display:flex; gap:.4em; align-items:center; margin:0">
+      <input name="hostname" value="{{ a.hostname }}" required
+             style="margin:0; padding:.2em .4em; min-width: 14em">
+      <button type="submit" class="secondary outline"
+              style="padding:.2em .6em; margin:0">Save</button>
+    </form>
+  </td>
+  <td>{{ a.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+  <td>{{ a.last_seen.strftime("%Y-%m-%d %H:%M") if a.last_seen else "never" }}</td>
+  <td><small><code>{{ a.id }}</code></small></td>
+</tr>
+{% endfor %}
+</tbody></table>
+{% else %}
+<p><em>No agents yet. Create one below.</em></p>
+{% endif %}
+
+<article>
+<h4>Install agent on a new machine</h4>
+<p><small>Generates a fresh API key for that machine. The key is shown
+to you <strong>exactly once</strong> and is baked into a downloadable
+install script — keep it safe. The server only stores its hash, so if
+you lose it you'll need to mint a new one.</small></p>
+<form method="post" action="/ui/agent/new">
+  <label for="hostname">Hostname / label for this machine</label>
+  <input id="hostname" name="hostname" value="{{ default_host }}" required>
+  <button type="submit">Generate installer</button>
+</form>
+</article>
+
+</body></html>

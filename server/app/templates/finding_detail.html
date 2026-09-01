@@ -1,0 +1,115 @@
+<!doctype html><html data-theme="dark"><head><title>Verdict — {{ f.title or "Finding" }}</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  .sev { padding:2px 10px; border-radius:4px; font-size:0.9em; }
+  .sev-critical { background:#7a1f1f; color:#fff; }
+  .sev-high     { background:#b94a48; color:#fff; }
+  .sev-medium   { background:#c5862e; color:#fff; }
+  .sev-low      { background:#3b7a3d; color:#fff; }
+  .sev-info     { background:#406b80; color:#fff; }
+  .sev-unknown  { background:#666;    color:#fff; }
+  textarea { font-family: ui-monospace, monospace; font-size: 0.9em; }
+  .meta    { color: var(--pico-muted-color); font-size: 0.9em; }
+</style>
+</head><body class="container">
+<nav>
+  <ul>
+    <li><strong>Verdict</strong></li>
+    <li><a href="/">Reports</a></li>
+    <li><a href="/ui/runs">Runs</a></li>
+    <li><a href="/ui/scans">Scans</a></li>
+    <li><a href="/ui/projects">Projects</a></li>
+    <li><a href="/ui/agent">Agents</a></li>
+  </ul>
+  <ul><li>{{ user.email }} ({{ user.role.value }})</li><li><a href="/ui/logout">logout</a></li></ul>
+</nav>
+
+<header>
+  <p class="meta"><a href="/ui/scans/{{ scan.id }}">&laquo; back to scan: {{ scan.product or scan.id }}</a></p>
+  <h3>
+    <span class="sev sev-{{ f.severity.value }}">{{ f.severity.value }}</span>
+    {{ f.title or "(untitled)" }}
+  </h3>
+  <p class="meta">
+    {{ f.cwe }}{% if f.cwe and f.cve %} · {% endif %}{{ f.cve }}
+    · status: <strong>{{ f.status.value }}</strong>
+    {% if f.triaged_by %} · triaged by {{ f.triaged_by }}
+       {% if f.triaged_at %} at {{ f.triaged_at.strftime("%Y-%m-%d %H:%M UTC") }}{% endif %}
+    {% endif %}
+    · created {{ f.created_at.strftime("%Y-%m-%d %H:%M UTC") }}
+  </p>
+</header>
+
+<form method="post" action="/ui/scans/{{ scan.id }}/findings/{{ f.id }}/edit">
+
+  <article>
+    <h4>Summary</h4>
+    <label>Title <input name="title" value="{{ f.title }}" {% if not can_edit %}disabled{% endif %}></label>
+    <div class="grid">
+      <label>Severity
+        <select name="severity" {% if not can_edit %}disabled{% endif %}>
+          {% for sev in severities %}
+          <option value="{{ sev.value }}" {% if sev == f.severity %}selected{% endif %}>{{ sev.value }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Status
+        <select name="status" {% if not can_edit %}disabled{% endif %}>
+          {% for st in statuses %}
+          <option value="{{ st.value }}" {% if st == f.status %}selected{% endif %}>{{ st.value }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+    <div class="grid">
+      <label>CWE <input name="cwe" value="{{ f.cwe }}" placeholder="CWE-122" {% if not can_edit %}disabled{% endif %}></label>
+      <label>CVE <input name="cve" value="{{ f.cve }}" placeholder="CVE-2025-…" {% if not can_edit %}disabled{% endif %}></label>
+      <label>Affected component <input name="affected_component" value="{{ f.affected_component }}" {% if not can_edit %}disabled{% endif %}></label>
+    </div>
+    <div class="grid">
+      <label>Assigned to <input name="assigned_to" value="{{ f.assigned_to }}" {% if not can_edit %}disabled{% endif %}></label>
+      <label>Triaged by <input name="triaged_by" value="{{ f.triaged_by }}" {% if not can_edit %}disabled{% endif %}></label>
+    </div>
+  </article>
+
+  <article>
+    <h4>Description</h4>
+    <textarea name="description" rows="5" {% if not can_edit %}disabled{% endif %}>{{ f.description }}</textarea>
+  </article>
+
+  <article>
+    <h4>Steps to reproduce</h4>
+    <textarea name="steps_to_reproduce" rows="6" {% if not can_edit %}disabled{% endif %}>{{ f.steps_to_reproduce }}</textarea>
+  </article>
+
+  <article>
+    <h4>Remediation</h4>
+    <textarea name="remediation" rows="4" {% if not can_edit %}disabled{% endif %}>{{ f.remediation }}</textarea>
+  </article>
+
+  <article>
+    <h4>Proof of concept</h4>
+    <textarea name="proof_of_concept" rows="5" {% if not can_edit %}disabled{% endif %}>{{ f.proof_of_concept }}</textarea>
+  </article>
+
+  <article>
+    <h4>References</h4>
+    <small class="meta">One URL or reference per line.</small>
+    <textarea name="references" rows="3" {% if not can_edit %}disabled{% endif %}>{{ f.references }}</textarea>
+  </article>
+
+  {% if can_edit %}
+  <button type="submit">Save finding</button>
+  {% endif %}
+</form>
+
+{% if can_edit %}
+<form method="post" action="/ui/scans/{{ scan.id }}/findings/{{ f.id }}/delete"
+      onsubmit="return confirm('Delete this finding?')"
+      style="margin-top:1.5em">
+  <button type="submit" class="secondary outline">Delete finding</button>
+</form>
+{% endif %}
+
+</body></html>

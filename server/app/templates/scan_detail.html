@@ -1,0 +1,295 @@
+<!doctype html><html data-theme="dark"><head><title>Verdict — {{ scan.product or "scan" }}</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  .state-draft     { color: #b58900; font-weight:600; }
+  .state-confirmed { color: #2aa198; font-weight:600; }
+  details summary  { cursor: pointer; }
+  .runs td, .findings td { vertical-align: top; font-size: 0.92em; }
+  .runs td pre     { white-space: pre-wrap; word-break: break-word; margin:0;
+                     font-size: 0.9em; max-width: 28em; }
+  .sev { padding:2px 8px; border-radius:4px; font-size:0.85em; }
+  .sev-critical { background:#7a1f1f; color:#fff; }
+  .sev-high     { background:#b94a48; color:#fff; }
+  .sev-medium   { background:#c5862e; color:#fff; }
+  .sev-low      { background:#3b7a3d; color:#fff; }
+  .sev-info     { background:#406b80; color:#fff; }
+  .sev-unknown  { background:#666;    color:#fff; }
+</style>
+</head><body class="container">
+<nav>
+  <ul>
+    <li><strong>Verdict</strong></li>
+    <li><a href="/">Reports</a></li>
+    <li><a href="/ui/runs">Runs</a></li>
+    <li><a href="/ui/scans">Scans</a></li>
+    <li><a href="/ui/projects">Projects</a></li>
+    <li><a href="/ui/agent">Agents</a></li>
+  </ul>
+  <ul><li>{{ user.email }} ({{ user.role.value }})</li><li><a href="/ui/logout">logout</a></li></ul>
+</nav>
+
+{% include "_flash.html" %}
+
+
+<header>
+  <h3>{{ scan.product or "(no product)" }}
+    <small class="state-{{ scan.state.value }}">[{{ scan.state.value }}]</small>
+  </h3>
+  <p>
+    <small>created {{ scan.created_at.strftime("%Y-%m-%d %H:%M UTC") }}
+    · updated {{ scan.updated_at.strftime("%Y-%m-%d %H:%M UTC") }}</small>
+    {% if source_report %}
+      · <a href="/ui/reports/{{ source_report.id }}">source file: {{ source_report.filename }}</a>
+    {% endif %}
+  </p>
+</header>
+
+<article>
+<h4>Project</h4>
+{% if scan.project %}
+  <p>Attached to <a href="/ui/projects/{{ scan.project.id }}">{{ scan.project.name }}</a>.</p>
+{% else %}
+  <p><em>Not attached to a project.</em></p>
+{% endif %}
+{% if can_edit %}
+<form method="post" action="/ui/scans/{{ scan.id }}/project" style="display:flex; gap:.5em; align-items:end">
+  <label style="flex:1; margin:0">
+    <select name="project_id">
+      <option value="">— none —</option>
+      {% for p in my_projects %}
+      <option value="{{ p.id }}" {% if scan.project_id == p.id %}selected{% endif %}>{{ p.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button type="submit">Save project</button>
+</form>
+{% if not my_projects %}<small><a href="/ui/projects/new">Create a project</a> first to attach this scan.</small>{% endif %}
+{% endif %}
+</article>
+
+<article>
+<h4>Scan summary</h4>
+<form method="post" action="/ui/scans/{{ scan.id }}/edit">
+  <div class="grid">
+    <label>Product <input name="product" value="{{ scan.product }}" {% if not can_edit %}disabled{% endif %}></label>
+    <label>Scan target <input name="scan_target" value="{{ scan.scan_target }}" {% if not can_edit %}disabled{% endif %}></label>
+  </div>
+  <div class="grid">
+    <label>Harness used <input name="harness_used" value="{{ scan.harness_used }}" {% if not can_edit %}disabled{% endif %}></label>
+    <label>Scan by <input name="scan_by" value="{{ scan.scan_by }}" {% if not can_edit %}disabled{% endif %}></label>
+  </div>
+  <div class="grid">
+    <label>Results file <input name="results_file" value="{{ scan.results_file }}" {% if not can_edit %}disabled{% endif %}></label>
+    <label>Spreadsheet <input name="spreadsheet_link" value="{{ scan.spreadsheet_link }}" {% if not can_edit %}disabled{% endif %}></label>
+  </div>
+  <label>Triaged by <input name="triaged_by" value="{{ scan.triaged_by }}" {% if not can_edit %}disabled{% endif %}></label>
+
+  <fieldset>
+    <legend>Counts</legend>
+    <div class="grid">
+      <label>Findings <input name="findings" type="number" value="{{ scan.findings }}" {% if not can_edit %}disabled{% endif %}></label>
+      <label>TP <input name="tp" type="number" value="{{ scan.tp }}" {% if not can_edit %}disabled{% endif %}></label>
+      <label>FP <input name="fp" type="number" value="{{ scan.fp }}" {% if not can_edit %}disabled{% endif %}></label>
+    </div>
+    <div class="grid">
+      <label>SBP <input name="sbp" type="number" value="{{ scan.sbp }}" {% if not can_edit %}disabled{% endif %}></label>
+      <label>Duplicates <input name="duplicates" type="number" value="{{ scan.duplicates }}" {% if not can_edit %}disabled{% endif %}></label>
+      <label>Untriaged <input name="untriaged" type="number" value="{{ scan.untriaged }}" {% if not can_edit %}disabled{% endif %}></label>
+    </div>
+  </fieldset>
+
+  <div class="grid">
+    <label>Highest severity
+      <select name="highest_severity" {% if not can_edit %}disabled{% endif %}>
+        {% for sev in severities %}
+        <option value="{{ sev.value }}" {% if sev == scan.highest_severity %}selected{% endif %}>{{ sev.value }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>State
+      <select name="state" {% if not can_edit %}disabled{% endif %}>
+        {% for st in states %}
+        <option value="{{ st.value }}" {% if st == scan.state %}selected{% endif %}>{{ st.value }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+
+  <label>Notes <textarea name="notes" rows="3" {% if not can_edit %}disabled{% endif %}>{{ scan.notes }}</textarea></label>
+
+  {% if can_edit %}
+    <button type="submit">Save changes</button>
+    {% if scan.state.value == 'draft' %}
+      <button type="submit" formaction="/ui/scans/{{ scan.id }}/confirm" class="secondary">Confirm draft</button>
+    {% endif %}
+  {% endif %}
+</form>
+</article>
+
+<article>
+<h4>Findings</h4>
+{% if findings %}
+<table class="findings">
+<thead><tr>
+  <th style="width:5em">Severity</th>
+  <th>Title</th>
+  <th style="width:8em">CWE</th>
+  <th style="width:10em">Status</th>
+  <th>Triaged by</th>
+  <th>When</th>
+</tr></thead>
+<tbody>
+{% for f in findings %}
+<tr>
+  <td><span class="sev sev-{{ f.severity.value }}">{{ f.severity.value }}</span></td>
+  <td><a href="/ui/scans/{{ scan.id }}/findings/{{ f.id }}">{{ f.title or "(untitled)" }}</a></td>
+  <td><small><code>{{ f.cwe }}</code>{% if f.cve %} <code>{{ f.cve }}</code>{% endif %}</small></td>
+  <td>{{ f.status.value }}</td>
+  <td><small>{{ f.triaged_by }}</small></td>
+  <td><small>{{ f.created_at.strftime("%Y-%m-%d") }}</small></td>
+</tr>
+{% endfor %}
+</tbody></table>
+{% else %}
+<p><em>No findings logged yet.</em></p>
+{% endif %}
+
+{% if can_edit %}
+<details>
+<summary>+ Add a finding</summary>
+<form method="post" action="/ui/scans/{{ scan.id }}/findings">
+  <label>Title <input name="title" required></label>
+  <div class="grid">
+    <label>Severity
+      <select name="severity">
+        {% for sev in severities %}
+        <option value="{{ sev.value }}" {% if sev.value == 'unknown' %}selected{% endif %}>{{ sev.value }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Status
+      <select name="status">
+        {% for st in finding_statuses %}
+        <option value="{{ st.value }}" {% if st.value == 'open' %}selected{% endif %}>{{ st.value }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+  <div class="grid">
+    <label>CWE <input name="cwe" placeholder="CWE-122"></label>
+    <label>CVE <input name="cve" placeholder="CVE-2025-…"></label>
+    <label>Affected component <input name="affected_component"></label>
+  </div>
+  <label>Description <textarea name="description" rows="3"></textarea></label>
+  <label>Steps to reproduce <textarea name="steps_to_reproduce" rows="3"></textarea></label>
+  <label>Remediation <textarea name="remediation" rows="2"></textarea></label>
+  <label>Proof of concept <textarea name="proof_of_concept" rows="2"></textarea></label>
+  <label>References (URLs, one per line) <textarea name="references" rows="2"></textarea></label>
+  <div class="grid">
+    <label>Assigned to <input name="assigned_to"></label>
+    <label>Triaged by <input name="triaged_by"></label>
+  </div>
+  <button type="submit">Add finding</button>
+</form>
+</details>
+{% endif %}
+</article>
+
+<article>
+<h4>POC files & attachments
+  <small style="color:var(--pico-muted-color); font-weight:normal">
+    ({{ attachments|length }})
+  </small>
+</h4>
+{% if attachments %}
+<table>
+<thead><tr><th>File</th><th>Type</th><th>Size</th><th>When</th><th></th></tr></thead>
+<tbody>
+{% for a in attachments %}
+<tr>
+  <td><a href="/attachments/{{ a.id }}">{{ a.filename }}</a></td>
+  <td><small>{{ a.content_type }}</small></td>
+  <td><small>{{ "%.1f"|format(a.size_bytes / 1024) }} KB</small></td>
+  <td><small>{{ a.created_at.strftime("%Y-%m-%d %H:%M") }}</small></td>
+  <td><small><a href="/attachments/{{ a.id }}/download">download</a></small></td>
+</tr>
+{% endfor %}
+</tbody></table>
+{% else %}
+<p><em>No POC files attached yet. The agent ships anything Claude writes
+under a <code>poc/</code> directory automatically.</em></p>
+{% endif %}
+</article>
+
+<article>
+<h4>Run log</h4>
+{% if runs %}
+<table class="runs">
+<thead><tr>
+  <th>Date</th><th>Day</th><th>Run</th><th>Box</th><th>Product</th>
+  <th>Harness</th><th>Results / POC</th><th>Comment</th><th>✓</th>{% if can_edit %}<th></th>{% endif %}
+</tr></thead>
+<tbody>
+{% for r in runs %}
+<tr>
+  <td>{{ r.date.isoformat() if r.date else "" }}</td>
+  <td>{{ r.day }}</td>
+  <td>{{ r.run }}</td>
+  <td>{{ r.box }}</td>
+  <td>{{ r.product }}</td>
+  <td>{{ r.harness }}</td>
+  <td>
+    {% if r.results %}<pre>{{ r.results }}</pre>{% endif %}
+    {% if r.poc %}<details><summary>POC</summary><pre>{{ r.poc }}</pre></details>{% endif %}
+  </td>
+  <td><small>{{ r.comment }}</small></td>
+  <td>{% if r.complete %}✓{% else %}—{% endif %}</td>
+  {% if can_edit %}
+  <td>
+    <form method="post" action="/ui/scans/{{ scan.id }}/runs/{{ r.id }}/delete" style="margin:0">
+      <button type="submit" class="secondary outline" style="padding:.1em .5em">×</button>
+    </form>
+  </td>
+  {% endif %}
+</tr>
+{% endfor %}
+</tbody></table>
+{% else %}
+<p><em>No runs logged yet.</em></p>
+{% endif %}
+
+{% if can_edit %}
+<details>
+<summary>+ Add a run</summary>
+<form method="post" action="/ui/scans/{{ scan.id }}/runs">
+  <div class="grid">
+    <label>Date <input name="date" type="date"></label>
+    <label>Day <input name="day" placeholder="Day 1, Mon, ..."></label>
+    <label>Run <input name="run" placeholder="run-001"></label>
+  </div>
+  <div class="grid">
+    <label>Box <input name="box"></label>
+    <label>Product <input name="product" placeholder="{{ scan.product }}"></label>
+    <label>Harness <input name="harness" placeholder="{{ scan.harness_used }}"></label>
+  </div>
+  <label>Prompt <textarea name="prompt" rows="2"></textarea></label>
+  <label>Results <textarea name="results" rows="2"></textarea></label>
+  <label>POC <textarea name="poc" rows="2"></textarea></label>
+  <label>Comment <input name="comment"></label>
+  <label><input type="checkbox" name="complete" value="1"> Complete</label>
+  <button type="submit">Add run</button>
+</form>
+</details>
+{% endif %}
+</article>
+
+{% if can_edit %}
+<form method="post" action="/ui/scans/{{ scan.id }}/delete"
+      onsubmit="return confirm('Delete this scan and all its runs?')"
+      style="margin-top:2em">
+  <button type="submit" class="secondary outline">Delete scan</button>
+</form>
+{% endif %}
+
+</body></html>

@@ -1,0 +1,85 @@
+<!doctype html><html data-theme="dark"><head><title>Verdict — Run {{ session_id[:12] }}</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  .state-draft     { color: #b58900; font-weight:600; }
+  .state-confirmed { color: #2aa198; font-weight:600; }
+  .summary-cell { max-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  table { table-layout: fixed; width: 100%; }
+</style>
+</head><body class="container">
+<nav>
+  <ul>
+    <li><strong>Verdict</strong></li>
+    <li><a href="/">Reports</a></li>
+    <li><a href="/ui/runs">Runs</a></li>
+    <li><a href="/ui/scans">Scans</a></li>
+    <li><a href="/ui/projects">Projects</a></li>
+    <li><a href="/ui/agent">Agents</a></li>
+  </ul>
+  <ul><li>{{ user.email }} ({{ user.role.value }})</li><li><a href="/ui/logout">logout</a></li></ul>
+</nav>
+
+{% include "_flash.html" %}
+
+
+<header>
+  <p><small><a href="/ui/runs">&laquo; back to runs</a></small></p>
+  <h3>{{ run.title or "Run" }}
+    <small style="font-weight:normal; color:var(--pico-muted-color);">
+      <code>{{ session_id[:16] }}…</code>
+    </small>
+  </h3>
+  {% if scan %}
+  <p>
+    Derived scan:
+    <a href="/ui/scans/{{ scan.id }}">{{ scan.product or "(unnamed)" }}</a>
+    <small class="state-{{ scan.state.value }}">[{{ scan.state.value }}]</small>
+  </p>
+  {% endif %}
+  {% if run.project %}
+  <p>Project: <a href="/ui/projects/{{ run.project.id }}">{{ run.project.name }}</a></p>
+  {% endif %}
+</header>
+
+{% if can_edit %}
+<article>
+  <h4>Run info</h4>
+  <form method="post" action="/ui/runs/{{ session_id }}/edit">
+    <label>Title
+      <input name="title" value="{{ run.title }}" placeholder="e.g. polkit fuzzing — 2026-05-20">
+    </label>
+    <label>Project
+      <select name="project_id">
+        <option value="">— none —</option>
+        {% for p in my_projects %}
+        <option value="{{ p.id }}" {% if run.project_id == p.id %}selected{% endif %}>{{ p.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button type="submit">Save</button>
+    {% if not my_projects %}
+    <small><a href="/ui/projects/new">Create a project first</a> to attach this run to one.</small>
+    {% endif %}
+  </form>
+</article>
+{% endif %}
+
+<h4>Files in this run ({{ reports|length }})</h4>
+<table>
+<thead><tr>
+  <th>File</th><th style="width:8em">Tool</th><th style="width:10em">When</th>
+  <th>Summary</th>
+</tr></thead>
+<tbody>
+{% for row in reports %}
+<tr>
+  <td><a href="/ui/reports/{{ row.r.id }}">{{ row.r.filename }}</a></td>
+  <td>{{ row.r.source_tool.value }}</td>
+  <td><small>{{ row.r.created_at.strftime("%Y-%m-%d %H:%M") }}</small></td>
+  <td class="summary-cell" title="{{ row.summary }}"><small>{{ row.summary }}</small></td>
+</tr>
+{% endfor %}
+</tbody></table>
+
+</body></html>

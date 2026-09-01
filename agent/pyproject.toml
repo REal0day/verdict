@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "irs-agent"
+version = "0.2.2"
+description = "Verdict collector agent: watches AI tool output (.md) and ships to Verdict server."
+requires-python = ">=3.9"
+dependencies = [
+  "watchdog>=4.0",
+  "httpx>=0.27",
+  "platformdirs>=4.0",
+]
+
+[project.scripts]
+irs-agent = "irs_agent.cli:main"

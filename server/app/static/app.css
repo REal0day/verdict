@@ -1,0 +1,254 @@
+/* Verdict — Jinja pages styled to match the React SPA.
+ *
+ * Loads Inter, then overrides Pico CSS's `--pico-*` tokens with the same
+ * palette the SPA uses (see frontend/src/index.css). End result: scan
+ * detail, finding detail, report view, attachment view, agent install all
+ * feel visually identical to the React app.
+ */
+
+@import url("https://rsms.me/inter/inter.css");
+
+/* ---- design tokens (mirror the SPA's dark theme) ---- */
+:root {
+  --bg:        10  10  14;
+  --surface:   20  22  28;
+  --muted:     28  30  38;
+  --border:    38  41  50;
+  --fg:       236 238 244;
+  --fg-muted: 148 156 172;
+  --primary:  129 140 248;
+  --primary-fg: 17 19 23;
+  --danger:   248 113 113;
+  --success:   52 211 153;
+  --warning:  251 191  36;
+}
+
+/* ---- Pico overrides — drive Pico's variables from our tokens ---- */
+[data-theme="dark"], :root {
+  --pico-background-color:            rgb(var(--bg));
+  --pico-color:                       rgb(var(--fg));
+  --pico-muted-color:                 rgb(var(--fg-muted));
+  --pico-muted-border-color:          rgb(var(--border));
+
+  --pico-h1-color: rgb(var(--fg));
+  --pico-h2-color: rgb(var(--fg));
+  --pico-h3-color: rgb(var(--fg));
+  --pico-h4-color: rgb(var(--fg));
+  --pico-h5-color: rgb(var(--fg));
+  --pico-h6-color: rgb(var(--fg));
+
+  --pico-primary:                     rgb(var(--primary));
+  --pico-primary-background:          rgb(var(--primary));
+  --pico-primary-hover-background:    rgba(var(--primary) / .85);
+  --pico-primary-border:              rgb(var(--primary));
+  --pico-primary-hover-border:        rgb(var(--primary));
+  --pico-primary-focus:               rgba(var(--primary) / .25);
+  --pico-primary-inverse:             rgb(var(--primary-fg));
+
+  --pico-secondary:                   rgb(var(--fg-muted));
+  --pico-secondary-background:        rgb(var(--surface));
+  --pico-secondary-border:            rgb(var(--border));
+  --pico-secondary-hover-background:  rgb(var(--muted));
+
+  --pico-card-background-color:       rgb(var(--surface));
+  --pico-card-border-color:           rgb(var(--border));
+  --pico-card-sectionning-background-color: rgb(var(--surface));
+
+  --pico-form-element-background-color: rgb(var(--surface));
+  --pico-form-element-color:            rgb(var(--fg));
+  --pico-form-element-border-color:     rgb(var(--border));
+  --pico-form-element-active-background-color: rgb(var(--muted));
+  --pico-form-element-active-border-color: rgb(var(--primary));
+  --pico-form-element-focus-color:      rgba(var(--primary) / .45);
+  --pico-form-element-placeholder-color: rgba(var(--fg-muted) / .8);
+
+  --pico-table-border-color:          rgb(var(--border));
+  --pico-table-row-stripped-background-color: rgba(var(--muted) / .35);
+
+  --pico-blockquote-border-color:     rgb(var(--border));
+  --pico-blockquote-footer-color:     rgb(var(--fg-muted));
+
+  --pico-mark-background-color:       rgba(var(--warning) / .25);
+  --pico-mark-color:                  rgb(var(--fg));
+
+  --pico-code-background-color:       rgb(var(--muted));
+  --pico-code-color:                  rgb(var(--fg));
+  --pico-code-tag-color:              rgba(var(--primary) / 1);
+}
+
+/* ---- base ---- */
+html { font-size: 14px; color-scheme: dark; }
+body {
+  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system,
+               "Segoe UI", Roboto, sans-serif;
+  background: rgb(var(--bg));
+  color: rgb(var(--fg));
+  font-feature-settings: "ss01", "cv11";
+  line-height: 1.55;
+}
+code, pre, .mono { font-family: 'JetBrains Mono', ui-monospace, "SF Mono", Menlo, monospace; }
+
+/* container can use more of the viewport on big screens */
+body.container, main.container, .container {
+  max-width: min(96vw, 1500px);
+}
+
+/* ---- typography ---- */
+h1 { font-size: 1.7rem; letter-spacing: -0.01em; }
+h2 { font-size: 1.4rem; letter-spacing: -0.01em; margin-top: .8rem; }
+h3 { font-size: 1.2rem; letter-spacing: -0.005em; margin-top: .8rem; margin-bottom: .5rem; }
+h4 { font-size: 1rem;   letter-spacing:  0;       margin-top: .6rem; margin-bottom: .4rem; }
+
+/* ---- top nav (matches the SPA's sidebar visually-ish: subtle, dark, no shadow) ---- */
+nav {
+  padding-block: .5rem;
+  border-bottom: 1px solid rgb(var(--border));
+  background: rgb(var(--surface));
+  margin: 0 calc(50% - 50vw) 1.25rem;
+  padding-inline: max(1.5rem, calc(50vw - 750px));
+}
+nav ul { gap: .6rem; padding: 0; margin: 0; }
+nav li { padding-block: 0; }
+nav a, nav strong {
+  color: rgb(var(--fg-muted));
+  padding: .25rem .55rem;
+  border-radius: 4px;
+  transition: color .12s, background .12s;
+}
+nav strong { color: rgb(var(--primary)); font-weight: 600; }
+nav a:hover { color: rgb(var(--fg)); background: rgba(var(--muted) / .5); text-decoration: none; }
+nav a[aria-current], nav li > a[aria-current="page"] { color: rgb(var(--fg)); background: rgba(var(--primary) / .12); }
+
+/* ---- cards / articles ---- */
+article {
+  background: rgb(var(--surface));
+  border: 1px solid rgb(var(--border));
+  border-radius: 8px;
+  box-shadow: 0 1px 0 rgba(0,0,0,.18);
+  padding: 1rem 1.1rem;
+  margin-block: .9rem;
+}
+article > h4:first-child { margin-top: 0; }
+
+/* ---- tables ---- */
+table {
+  font-size: 0.92em;
+  border: 1px solid rgb(var(--border));
+  border-radius: 8px;
+  overflow: hidden;
+  width: 100%;
+}
+thead {
+  background: rgba(var(--muted) / .55);
+}
+thead th {
+  padding: .55rem .8rem !important;
+  font-size: .78em;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: rgb(var(--fg-muted));
+  font-weight: 500;
+  border-bottom: 1px solid rgb(var(--border));
+}
+tbody td {
+  padding: .55rem .8rem !important;
+  vertical-align: middle;
+  border-bottom: 1px solid rgba(var(--border) / .6);
+}
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:hover td { background: rgba(var(--muted) / .35); }
+table a { color: rgb(var(--primary)); }
+table a:hover { color: rgb(var(--fg)); }
+
+/* ---- forms ---- */
+input, select, textarea {
+  background: rgb(var(--surface));
+  color: rgb(var(--fg));
+  border: 1px solid rgb(var(--border));
+  border-radius: 6px;
+  font-size: 0.9em;
+  padding: .35rem .6rem;
+  transition: border-color .12s, box-shadow .12s;
+}
+input:focus, select:focus, textarea:focus {
+  border-color: rgb(var(--primary));
+  box-shadow: 0 0 0 3px rgba(var(--primary) / .25);
+  outline: none;
+}
+select {
+  width: 100%;
+  min-width: 14rem;
+  height: 2rem;
+}
+textarea { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: .85em; }
+
+/* ---- buttons ---- */
+button, [role="button"] {
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 2rem; padding: 0 .85rem; gap: .4rem;
+  border-radius: 6px;
+  font-weight: 500; font-size: .9em;
+  line-height: 1;
+  background: rgb(var(--primary));
+  color: rgb(var(--primary-fg));
+  border: 1px solid rgb(var(--primary));
+  cursor: pointer;
+  transition: filter .12s, background .12s, border-color .12s;
+}
+button:hover, [role="button"]:hover { filter: brightness(1.08); }
+button.secondary, [role="button"].secondary,
+button.outline,   [role="button"].outline {
+  background: rgb(var(--surface));
+  color: rgb(var(--fg));
+  border-color: rgb(var(--border));
+}
+button.secondary:hover, [role="button"].secondary:hover,
+button.outline:hover,   [role="button"].outline:hover { background: rgb(var(--muted)); }
+button.full, [role="button"].full { width: 100%; }
+button:disabled, [role="button"]:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ---- links ---- */
+a { color: rgb(var(--primary)); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ---- code blocks ---- */
+code {
+  background: rgb(var(--muted));
+  border: 1px solid rgb(var(--border));
+  padding: 1px 5px;
+  font-size: .85em;
+  border-radius: 4px;
+}
+pre {
+  background: rgb(var(--muted));
+  border: 1px solid rgb(var(--border));
+  border-radius: 6px;
+  padding: .8rem 1rem;
+  overflow: auto;
+  font-size: .85em;
+}
+pre code { background: transparent; border: 0; padding: 0; }
+
+/* ---- misc ---- */
+hr { border: 0; border-top: 1px solid rgb(var(--border)); margin: 1.25rem 0; }
+small, .meta { color: rgb(var(--fg-muted)); }
+
+/* status / state chips used throughout */
+.state-draft     { color: rgb(var(--warning)); font-weight:600; }
+.state-confirmed { color: rgb(var(--success)); font-weight:600; }
+
+/* flash banner (used by /ui/projects/.../members/add success etc.) */
+.flash {
+  background: rgba(var(--success) / .12);
+  border-left: 3px solid rgb(var(--success));
+  color: rgb(var(--fg));
+  padding: .55rem .9rem;
+  margin: .8rem 0;
+  border-radius: 6px;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.flash button.close {
+  background: transparent; border: 0; color: inherit; cursor: pointer;
+  font-size: 1.1em; padding: 0 .3rem; line-height: 1;
+  height: auto;
+}
