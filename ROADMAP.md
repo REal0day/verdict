@@ -345,6 +345,101 @@ Tracks known gaps and planned improvements before broader user testing of the ag
   with combined findings/runs. New **Runs** view (`/ui/runs`) groups
   reports per session; report view shows a "Part of run" banner.
 
+## Model-agnostic AI support
+
+**Direction:** Verdict was built Anthropic-first, but nothing about the product
+requires it. An operator should be able to point it at whatever model they
+already pay for — or at one running on their own hardware — and get the same
+summaries, extraction and chat. This matters most for the audience the tool is
+aimed at: a small team standing up a PSIRT function, reading their own source
+code, who may not be permitted to send that code to a third-party API at all.
+
+Nothing here is a rename. The provider abstraction already exists
+(`app/ai/base.py:get_provider`) and OpenAI, Gemini and Grok providers are
+already implemented and reachable via `IRS_DEFAULT_AI_PROVIDER`. What is
+missing is that the *operational* surface — credential storage, key testing,
+model choice, and half a dozen call sites — still assumes Anthropic.
+
+### Phase 1 — finish the server-side abstraction
+
+- [ ] **Route the last two direct-SDK call sites through `get_provider()`.**
+      `ai/import_planner.py:394` and `routers/scans.py:806` each construct
+      `anthropic.Anthropic(...)` directly, so folder-import planning and
+      finding-enrichment hard-fail on a non-Anthropic deployment even though
+      `summarizer`, `extractor` and `component_analyzer` already go through
+      the abstraction.
+- [ ] **Widen the `AIProvider` contract past `chat()`.** The extractor and
+      import planner need reliable structured/JSON output and a large output
+      budget. `max_tokens=16384` is set only in the Anthropic provider; the
+      three httpx providers send no limit at all, so long extractions will
+      silently truncate differently per provider. Add `max_tokens` and a
+      `json_mode`/response-format hint to the interface, with per-provider
+      translation.
+- [ ] **Provider-aware model defaults.** Each provider carries its own
+      `*_model` setting already; make sure a wrong/unavailable model id fails
+      as `AIProviderUnavailable` with the model name in the message (already
+      true for Anthropic's `NotFoundError` — replicate for the others).
+
+### Phase 2 — per-provider credentials in the portal
+
+- [ ] **Generalise the settings store.** `routers/settings.py` persists exactly
+      one key (`ANTHROPIC_KEY = "anthropic_api_key"`). Move to
+      `ai_key:<provider>` rows in `app_settings` so every provider's key can be
+      set, cleared and tested from the UI, and `load_ai_settings()` rehydrates
+      all of them at startup rather than just Anthropic's.
+- [ ] **Parameterise the endpoints by provider.** `GET`/`PUT /settings/ai` and
+      `POST /settings/ai/test` are Anthropic-shaped;
+      `AISettingsIn.anthropic_api_key` should become
+      `{provider, api_key}`. `/ai/test` imports the Anthropic SDK directly —
+      it should issue a 1-token probe through `get_provider(name).chat()` so
+      the test path is the same code the real path uses.
+- [ ] **Make `/settings/ai/status` multi-provider.** It currently reports
+      `configured` from the Anthropic key alone, so a working
+      OpenAI-only deployment reports itself unconfigured and the chat UI shows
+      a false warning. Report per-provider status plus which one is active.
+- [ ] **Admin Settings page** (`frontend/src/pages/admin/Settings.tsx`) hardcodes
+      "Anthropic API key" — make it a per-provider list with the active one
+      marked.
+
+### Phase 3 — choosing a provider and model per request
+
+- [ ] **Scope provider choice below the global default.** `default_ai_provider`
+      is process-wide. Let a team, project, or user pin a provider + model, so
+      one deployment can use a local model for source-code work and a hosted
+      one for summarisation.
+- [ ] **Actually thread `provider_name` through.** `summarizer.summarize()` and
+      `extractor.extract()` already accept it; no caller ever passes it.
+- [ ] **Serve the model list from the server.** `MODEL_OPTIONS` in
+      `frontend/src/pages/Workbench.tsx` is a hardcoded list of Claude model
+      ids. Expose the configured providers' models via the API so the picker
+      reflects the deployment.
+
+### Phase 4 — de-Claude the UI and the agent
+
+- [ ] **Neutral UI copy.** Roughly six user-visible strings hardcode "Claude"
+      ("Ask Claude about your reports", "Claude is thinking…", "Drive Claude on
+      your own machine"). Drive them from the active provider's display name.
+- [ ] **Pluggable agent CLI.** The Workbench agent shells out to
+      `shutil.which("claude")` (`agent/irs_agent/remote.py:371`), so remote
+      sessions are Claude Code only. Introduce a CLI adapter interface
+      (Claude Code, Codex, Gemini CLI, aider, …) declared per agent and
+      recorded per session, so a Workbench session says which tool produced it.
+      This is the deepest coupling in the codebase and should be scoped on its
+      own.
+
+### Phase 5 — local and self-hosted models
+
+- [ ] **OpenAI-compatible `base_url` override.** Ollama, vLLM, LM Studio,
+      LiteLLM and OpenRouter all speak the OpenAI chat-completions shape, so a
+      single configurable base URL on the existing OpenAI provider unlocks all
+      of them with very little code. For a team that cannot send source to a
+      third-party API, this is the difference between the tool being usable and
+      not — arguably the highest-value item in this whole section.
+- [ ] **Document the trade-off.** Local models are materially worse at the
+      structured extraction the findings pipeline depends on. Note expected
+      quality loss, and keep the extractor's schema validation strict enough to
+      fail loudly rather than write junk findings.
+
 ## Nice-to-have (post-blocker)
 
 - [x] Pagination / filtering on the reports table (by tool, owner, date).
@@ -363,15 +458,30 @@ Tracks known gaps and planned improvements before broader user testing of the ag
 
 ## Known issues / things to fix
 
-- [ ] No indication when Claude API key is missing or invalid — chat just
-      fails silently from the user's perspective. *(still open — provider
-      raises `RuntimeError` unhandled in `chat.py`; UI shows generic
-      "Chat request failed".)*
+- [x] **No indication when the AI API key is missing or invalid.** *(landed)*
+      `app/ai/errors.py` defines `AIKeyMissing` (503), `AIKeyInvalid` (502) and
+      `AIProviderUnavailable` (502); every provider raises them instead of a
+      bare `RuntimeError`, and one handler in `main.py` covers all routes that
+      reach a provider. Messages are role-aware — only admins can set a key, so
+      only they are told where. `GET /settings/ai/status` lets any signed-in
+      user's chat surface warn *before* they compose a prompt.
 - [x] ~~Owner column on the reports table shows a truncated user id, not the
       user's email.~~ *(fixed — Reports table now renders `owner_email`,
       `frontend/src/pages/Reports.tsx:31,473-474`.)*
-- [ ] No CSRF protection on the HTMX form posts under `/ui/*`. *(still open —
-      no CSRF middleware/token anywhere in `server/app`.)*
+- [x] **No CSRF protection on the HTMX form posts under `/ui/*`.** *(landed)*
+      Double-submit token in `server/app/csrf.py`, registered as ASGI
+      middleware in `main.py`. An `irs_csrf` cookie (httponly, SameSite=Lax)
+      must match a `csrf_token` form field or `X-CSRF-Token` header on every
+      unsafe method under `/ui/*`; all 18 server-rendered POST forms carry the
+      hidden field, rendered from `request.state.csrf_token`.
+      Bearer-authenticated requests are exempt — an attacker's page cannot set
+      that header cross-origin, so the JSON API was never forgeable.
+      Written as pure ASGI rather than `BaseHTTPMiddleware` because reading the
+      token out of a form body means buffering the body and replaying it, or
+      the route handler receives an empty stream (`test_csrf.py` pins this).
+      `GET /ui/logout` became `POST /ui/logout`: `SameSite=Lax` still attaches
+      the cookie to a top-level GET navigation, so a plain link from another
+      site could log a user out.
 - [ ] Legacy Jinja login still silently swallows errors (redirects `?err=1`,
       template renders nothing). The React login at `/app` *does* show
       "Incorrect email or password." — so this only bites anyone still on the

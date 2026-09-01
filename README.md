@@ -8,14 +8,20 @@
 Centralised collection + viewing of AI coding-tool reports (Claude Code, OpenAI,
 Gemini, Grok). A lightweight cross-platform **agent** watches directories for
 `*.md` files and ships them over TLS to a **FastAPI server** where they are
-encrypted at rest, summarised by Claude, and browsable via a web UI with
-team-scoped RBAC. Users can also chat with Claude about their reports and have
-it generate new server-side reports.
+encrypted at rest, summarised by the AI provider you configure, and browsable
+via a web UI with team-scoped RBAC. Users can also chat with the model about
+their reports and have it generate new server-side reports.
+
+Server-side AI is provider-pluggable — Anthropic, OpenAI, Gemini and xAI are
+implemented today and selected with `IRS_DEFAULT_AI_PROVIDER`. See
+[ROADMAP.md](./ROADMAP.md#model-agnostic-ai-support) for the work that remains
+to make every surface (credential storage, model choice, the Workbench agent)
+fully model-agnostic.
 
 ```
 ┌──────────┐  *.md   ┌──────────┐  TLS+API key  ┌──────────────┐
 │ ClaudeCd │ ──────▶ │ irs-agent│ ─────────────▶ │  Verdict server  │──▶ Postgres (AES-GCM at rest)
-│ OpenAI…  │         │ (watch)  │                │  FastAPI     │──▶ Claude (summaries / chat)
+│ OpenAI…  │         │ (watch)  │                │  FastAPI     │──▶ AI provider (summaries / chat)
 └──────────┘         └──────────┘                └──────────────┘
 ```
 
