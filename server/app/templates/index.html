@@ -19,7 +19,7 @@
     <li><a href="/ui/projects">Projects</a></li>
     <li><a href="/ui/agent">Agents</a></li>
   </ul>
-  <ul><li>{{ user.email }} ({{ user.role.value }})</li><li><a href="/ui/logout">logout</a></li></ul>
+  <ul><li>{{ user.email }} ({{ user.role.value }})</li><li><form method="post" action="/ui/logout" style="display:inline; margin:0"><input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}"><button type="submit" class="secondary outline" style="display:inline; width:auto; padding:0; border:none; background:none; text-decoration:underline; cursor:pointer">logout</button></form></li></ul>
 </nav>
 
 <h3>Reports</h3>
@@ -51,6 +51,7 @@
 <form hx-post="/ui/chat" hx-target="#chat-out" hx-swap="beforeend"
       hx-vals='js:{report_ids: collectCheckedReportIds()}'
       hx-on::after-request="if(event.detail.successful) this.querySelector('textarea').value=''">
+  <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
   <textarea name="message" placeholder="Ask a question, or 'generate a weekly summary' over the selected reports..." required></textarea>
   <label><input type="checkbox" name="save_as_report" value="1"> Save reply as a new report</label>
   <button type="submit">Send</button>

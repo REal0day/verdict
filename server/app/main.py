@@ -29,11 +29,16 @@ from .routers import remote as r_remote
 from .routers import settings as r_settings
 from .routers import prompts as r_prompts
 from .ai.errors import AIProviderError
+from .csrf import CSRFMiddleware
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("irs")
 
 app = FastAPI(title="Verdict — AI Report Server")
+
+# Guards the cookie-authenticated /ui/* forms. The Bearer-authenticated JSON
+# API is exempt (see csrf.py) and so is unaffected.
+app.add_middleware(CSRFMiddleware)
 
 # API routers
 app.include_router(r_auth.router)
@@ -324,10 +329,13 @@ def ui_login(email: str = Form(...), password: str = Form(...), db: Session = De
     return resp
 
 
-@app.get("/ui/logout")
+@app.post("/ui/logout")
 def ui_logout():
+    # POST, not GET: samesite=lax still attaches the cookie to a top-level
+    # GET navigation, so a plain link from another site could log a user out.
     resp = RedirectResponse("/", status_code=303)
     resp.delete_cookie("irs_token")
+    resp.delete_cookie("irs_csrf")
     return resp
 
 

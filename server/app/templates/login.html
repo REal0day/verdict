@@ -5,6 +5,7 @@
 <main><article>
 <h2>Verdict</h2>
 <form method="post" action="/ui/login">
+  <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
   <input name="email" type="email" placeholder="email" required>
   <input name="password" type="password" placeholder="password" required>
   <button type="submit">Sign in</button>

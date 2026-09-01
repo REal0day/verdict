@@ -16,7 +16,7 @@
     <li><a href="/ui/projects">Projects</a></li>
     <li><a href="/ui/agent">Agents</a></li>
   </ul>
-  <ul><li>{{ user.email }} ({{ user.role.value }})</li><li><a href="/ui/logout">logout</a></li></ul>
+  <ul><li>{{ user.email }} ({{ user.role.value }})</li><li><form method="post" action="/ui/logout" style="display:inline; margin:0"><input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}"><button type="submit" class="secondary outline" style="display:inline; width:auto; padding:0; border:none; background:none; text-decoration:underline; cursor:pointer">logout</button></form></li></ul>
 </nav>
 
 {% include "_flash.html" %}
@@ -36,6 +36,7 @@
 <article>
   <h4>Project info</h4>
   <form method="post" action="/ui/projects/{{ project.id }}/edit">
+  <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
     <label>Name <input name="name" value="{{ project.name }}" required></label>
     <label>Description <textarea name="description" rows="2">{{ project.description }}</textarea></label>
     <button type="submit">Save</button>
@@ -62,6 +63,7 @@
     {% if m.id != project.created_by %}
     <form method="post" action="/ui/projects/{{ project.id }}/members/{{ m.id }}/remove"
           onsubmit="return confirm('Remove {{ m.email }} from this project?')" style="margin:0">
+  <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
       <button type="submit" class="secondary outline" style="padding:.1em .5em">remove</button>
     </form>
     {% else %}<small class="meta">creator</small>{% endif %}
@@ -73,6 +75,7 @@
 
 {% if can_edit %}
 <form method="post" action="/ui/projects/{{ project.id }}/members/add" style="margin-top:1em">
+  <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
   <div class="grid">
     <input name="email" type="email" placeholder="user@example.com" required>
     <button type="submit">Add member</button>
@@ -142,6 +145,7 @@
 <form method="post" action="/ui/projects/{{ project.id }}/delete"
       onsubmit="return confirm('Delete project {{ project.name }}? Member access goes away; reports/runs stay.')"
       style="margin-top:1.5em">
+  <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
   <button type="submit" class="secondary outline">Delete project</button>
 </form>
 {% endif %}

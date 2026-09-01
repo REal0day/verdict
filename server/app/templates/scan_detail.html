@@ -26,7 +26,7 @@
     <li><a href="/ui/projects">Projects</a></li>
     <li><a href="/ui/agent">Agents</a></li>
   </ul>
-  <ul><li>{{ user.email }} ({{ user.role.value }})</li><li><a href="/ui/logout">logout</a></li></ul>
+  <ul><li>{{ user.email }} ({{ user.role.value }})</li><li><form method="post" action="/ui/logout" style="display:inline; margin:0"><input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}"><button type="submit" class="secondary outline" style="display:inline; width:auto; padding:0; border:none; background:none; text-decoration:underline; cursor:pointer">logout</button></form></li></ul>
 </nav>
 
 {% include "_flash.html" %}
@@ -54,6 +54,7 @@
 {% endif %}
 {% if can_edit %}
 <form method="post" action="/ui/scans/{{ scan.id }}/project" style="display:flex; gap:.5em; align-items:end">
+  <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
   <label style="flex:1; margin:0">
     <select name="project_id">
       <option value="">— none —</option>
@@ -71,6 +72,7 @@
 <article>
 <h4>Scan summary</h4>
 <form method="post" action="/ui/scans/{{ scan.id }}/edit">
+  <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
   <div class="grid">
     <label>Product <input name="product" value="{{ scan.product }}" {% if not can_edit %}disabled{% endif %}></label>
     <label>Scan target <input name="scan_target" value="{{ scan.scan_target }}" {% if not can_edit %}disabled{% endif %}></label>
@@ -159,6 +161,7 @@
 <details>
 <summary>+ Add a finding</summary>
 <form method="post" action="/ui/scans/{{ scan.id }}/findings">
+  <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
   <label>Title <input name="title" required></label>
   <div class="grid">
     <label>Severity
@@ -248,6 +251,7 @@ under a <code>poc/</code> directory automatically.</em></p>
   {% if can_edit %}
   <td>
     <form method="post" action="/ui/scans/{{ scan.id }}/runs/{{ r.id }}/delete" style="margin:0">
+  <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
       <button type="submit" class="secondary outline" style="padding:.1em .5em">×</button>
     </form>
   </td>
@@ -263,6 +267,7 @@ under a <code>poc/</code> directory automatically.</em></p>
 <details>
 <summary>+ Add a run</summary>
 <form method="post" action="/ui/scans/{{ scan.id }}/runs">
+  <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
   <div class="grid">
     <label>Date <input name="date" type="date"></label>
     <label>Day <input name="day" placeholder="Day 1, Mon, ..."></label>
@@ -288,6 +293,7 @@ under a <code>poc/</code> directory automatically.</em></p>
 <form method="post" action="/ui/scans/{{ scan.id }}/delete"
       onsubmit="return confirm('Delete this scan and all its runs?')"
       style="margin-top:2em">
+  <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
   <button type="submit" class="secondary outline">Delete scan</button>
 </form>
 {% endif %}
