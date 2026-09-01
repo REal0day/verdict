@@ -12,6 +12,7 @@ import {
   Paperclip, FolderUp, X, Box, UploadCloud, MessageSquareText,
 } from "lucide-react";
 import { api, apiUpload } from "@/lib/api";
+import { aiErrorText } from "@/components/AIStatus";
 import { cn } from "@/lib/cn";
 import { PageHeader } from "@/components/Layout";
 import { Card, CardBody } from "@/components/ui/Card";
@@ -612,7 +613,7 @@ function SessionView({ sid, agentById }: {
         productName={s.project_name}
         onSend={(p) => send.mutate(p)}
         error={
-          send.isError ? (send.error as Error).message
+          send.isError ? aiErrorText(send.error, "Send failed.")
           : up.error ? `Upload failed: ${up.error}`
           : null
         }

@@ -30,5 +30,10 @@ def get_provider(name: str | None = None) -> "AIProvider":
     }
     cls = table.get(name)
     if not cls:
-        raise ValueError(f"Unknown AI provider: {name}")
+        from .errors import AIProviderError
+        raise AIProviderError(
+            name,
+            f"Unknown AI provider {name!r} is configured.",
+            f"Set IRS_DEFAULT_AI_PROVIDER to one of: {', '.join(sorted(table))}.",
+        )
     return cls()

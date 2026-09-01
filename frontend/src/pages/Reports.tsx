@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Empty } from "@/components/ui/Empty";
 import { ChatReply } from "@/components/ChatReply";
+import { AIErrorNotice, AIUnavailableNotice, useAIStatus } from "@/components/AIStatus";
 import { Select } from "@/components/ui/Input";
 import {
   FileText, Send, Sparkles, Download, MessagesSquare, X,
@@ -640,6 +641,8 @@ function ChatPanel({
   const [filename, setFilename] = useState("");
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const aiStatus = useAIStatus();
+  const aiDown = aiStatus.data ? !aiStatus.data.configured : false;
 
   const send = useMutation({
     mutationFn: () =>
@@ -693,6 +696,7 @@ function ChatPanel({
         ) : null}
       </CardHeader>
       <CardBody className="space-y-3">
+        <AIUnavailableNotice />
         <p className="text-xs text-fgmuted">{scopeLine}</p>
 
         <form onSubmit={submit} className="space-y-3">
@@ -721,7 +725,7 @@ function ChatPanel({
                 />
               </div>
             ) : null}
-            <Button type="submit" disabled={send.isPending || !message.trim()}>
+            <Button type="submit" disabled={send.isPending || !message.trim() || aiDown}>
               <Send size={14} /> {send.isPending ? "Claude is thinking…" : "Send"}
             </Button>
             {selected.size > 0 ? (
@@ -732,9 +736,7 @@ function ChatPanel({
           </div>
         </form>
 
-        {send.isError ? (
-          <p className="text-xs text-danger">Chat request failed.</p>
-        ) : null}
+        <AIErrorNotice error={send.error} />
 
         {turns.length === 0 ? (
           <div className="text-xs text-fgmuted italic flex items-center gap-2 mt-2">

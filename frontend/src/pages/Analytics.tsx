@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/Button";
 import { Input, Label, Textarea } from "@/components/ui/Input";
 import { Badge, SeverityChip } from "@/components/ui/Badge";
 import { ChatReply } from "@/components/ChatReply";
+import { AIErrorNotice, AIUnavailableNotice } from "@/components/AIStatus";
 import { downloadFile } from "@/lib/download";
 import {
   BarChart3, Send, Download, Sparkles, X, Check, FolderGit2,
@@ -446,6 +447,8 @@ export function Analytics() {
               ) : null}
             </div>
 
+            <AIUnavailableNotice />
+
             <div>
               <Label htmlFor="prompt">Question</Label>
               <Textarea
@@ -486,9 +489,7 @@ export function Analytics() {
                 <Send size={14} /> {run.isPending ? "Claude is thinking…" : "Run"}
               </Button>
             </div>
-            {run.isError ? (
-              <p className="text-xs text-danger">Couldn't run analysis.</p>
-            ) : null}
+            <AIErrorNotice error={run.error} />
           </form>
         </CardBody>
       </Card>

@@ -28,6 +28,7 @@ from .routers import share as r_share
 from .routers import remote as r_remote
 from .routers import settings as r_settings
 from .routers import prompts as r_prompts
+from .ai.errors import AIProviderError
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("irs")
@@ -63,6 +64,39 @@ app.include_router(r_remote.sess_api)
 app.include_router(r_remote.agent_api)
 app.include_router(r_settings.router)
 app.include_router(r_prompts.router)
+
+# ---- AI provider failures ----
+# Providers raise typed AIProviderError subclasses (missing key, rejected key,
+# upstream down). Without this handler they surface as an opaque 500 and the
+# UI can only say "request failed" — the operator never learns the key is the
+# problem. One handler covers every route that touches a provider.
+@app.exception_handler(AIProviderError)
+async def _ai_provider_error(request: Request, exc: AIProviderError):
+    from fastapi.responses import JSONResponse
+
+    # Only admins can fix the key, so only they get told where to do it.
+    is_admin = False
+    try:
+        from .database import SessionLocal
+        db = SessionLocal()
+        try:
+            u = _user_from_cookie(request, db)
+            is_admin = bool(u and u.role == models.Role.admin)
+        finally:
+            db.close()
+    except Exception:  # never let the handler itself fail the response
+        pass
+
+    log.warning("AI provider error on %s: %s", request.url.path, exc)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "detail": exc.detail(is_admin),
+            "error": type(exc).__name__,
+            "provider": exc.provider,
+        },
+    )
+
 
 # UI
 templates = Jinja2Templates(directory="app/templates")

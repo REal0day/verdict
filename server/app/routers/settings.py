@@ -144,3 +144,26 @@ def test_ai_key(
         return {"ok": True}
     except Exception as e:
         return {"ok": False, "error": str(e)[:300]}
+
+
+class AIStatusOut(BaseModel):
+    """Non-sensitive view of AI availability, readable by any signed-in user.
+
+    The chat surfaces poll this so they can warn *before* someone types a
+    prompt and waits on a request that was never going to work. Deliberately
+    omits the key hint that `GET /ai` exposes to admins.
+    """
+    configured: bool
+    provider: str
+    model: str
+
+
+@router.get("/ai/status", response_model=AIStatusOut)
+def get_ai_status(_: models.User = Depends(get_current_user)):
+    from ..config import settings as app_settings
+
+    return AIStatusOut(
+        configured=bool(provider_keys.anthropic_api_key),
+        provider=app_settings.default_ai_provider,
+        model=provider_keys.anthropic_model,
+    )
