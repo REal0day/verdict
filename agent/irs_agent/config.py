@@ -26,7 +26,18 @@ class AgentConf:
     remote_timeout_s: int = 1800
     remote_max_concurrent: int = 3
     anthropic_api_key: str = ""
-    claude_model: str = ""      # passed as `claude --model`; "" = inherit the CLI default
+
+    # Which coding-agent CLI runs Workbench sessions.
+    #   cli = "claude"   -> Claude Code (full tool/thinking events, resumable)
+    #   cli = "generic"  -> any other CLI, driven by cli_command below
+    cli: str = "claude"
+    # Template for cli="generic". Split with shlex before substitution, so a
+    # prompt with spaces stays one argument and never reaches a shell.
+    # Placeholders: {prompt} {model} {cwd}. Example:
+    #   cli_command = "aider --model {model} --message {prompt}"
+    cli_command: str = ""
+    cli_model: str = ""         # passed as the CLI's --model; "" = its default
+    claude_model: str = ""      # deprecated alias for cli_model
     collectors: list[CollectorConf] = field(default_factory=list)
 
     @staticmethod

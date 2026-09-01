@@ -189,7 +189,20 @@ async def upload_report(
 
 
 def _summarize_and_store(report_id: str, text: str):
-    s = summarize(text)
+    from ..ai import scope
+
+    db = SessionLocal()
+    try:
+        rpt = db.get(models.Report, report_id)
+        choice = scope.resolve(
+            db,
+            project_id=rpt.project_id if rpt else None,
+            user_id=rpt.user_id if rpt else None,
+        )
+    finally:
+        db.close()
+
+    s = summarize(text, choice.provider, choice.model)
     if not s:
         return
     db = SessionLocal()
@@ -274,7 +287,9 @@ def extract_report_findings(
     assert_can_view_report(db, viewer, rpt)
 
     text = crypto.decrypt(rpt.content_enc).decode("utf-8", errors="replace")
-    result = extract(text)
+    from ..ai import scope
+    choice = scope.resolve(db, project_id=rpt.project_id, user_id=rpt.user_id)
+    result = extract(text, choice.provider, choice.model)
     if not result or not result.get("findings"):
         raise HTTPException(422, "The AI couldn't extract any findings from this document.")
 
@@ -321,9 +336,22 @@ def extract_report_findings(
 def _extract_and_store_draft(report_id: str, text: str):
     """Best-effort: turn the markdown into a draft VulnScan + RunLogs."""
     import logging
+    from ..ai import scope
     log = logging.getLogger("irs.reports.extract")
+
+    db = SessionLocal()
     try:
-        result = extract(text)
+        rpt = db.get(models.Report, report_id)
+        choice = scope.resolve(
+            db,
+            project_id=rpt.project_id if rpt else None,
+            user_id=rpt.user_id if rpt else None,
+        )
+    finally:
+        db.close()
+
+    try:
+        result = extract(text, choice.provider, choice.model)
     except Exception as e:
         log.warning("extract failed for %s: %s", report_id, e)
         return

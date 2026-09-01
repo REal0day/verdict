@@ -329,10 +329,14 @@ def run_planner(
     db.commit()
 
     try:
+        from ..ai import scope
+        choice = scope.resolve(db, project_id=imp.project_id, user_id=imp.user_id)
         plan, log_text = plan_folder(
             imp.staging_path,
             existing_projects=existing_projects,
             user_label=imp.label,
+            provider_name=choice.provider,
+            model=choice.model,
         )
     except Exception as e:
         log.exception("planner failed for import %s", imp.id)

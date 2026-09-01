@@ -70,7 +70,9 @@ def chat(
         )
     history.append({"role": "user", "content": user_turn})
 
-    provider = get_provider()
+    from ..ai import scope
+    choice = scope.resolve(db, user_id=user.id)
+    provider = get_provider(choice.provider, choice.model)
     reply = provider.chat(_SYSTEM, history)
 
     db.add(models.ChatMessage(session_id=session.id, role="user", content=body.message))

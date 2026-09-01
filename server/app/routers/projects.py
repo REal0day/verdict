@@ -487,6 +487,8 @@ def api_update_project(
         p.name = n[:255]
     if "description" in payload and payload["description"] is not None:
         p.description = payload["description"].strip()[:2000]
+    from .teams import _apply_ai_pin
+    _apply_ai_pin(p, payload)
     db.commit()
     db.refresh(p)
     return _detail(db, p, viewer)

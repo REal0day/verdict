@@ -38,6 +38,8 @@ def analyze_component(
     archive_name: str,
     tree_summary: str,
     key_files: list[tuple[str, str]],
+    provider_name: str | None = None,
+    model: str | None = None,
 ) -> dict:
     parts = [f"Product: {product_name or '(unnamed)'}"]
     if product_desc:
@@ -57,7 +59,7 @@ def analyze_component(
             parts.append(content)
     user = "\n".join(parts)
 
-    reply = get_provider().chat(
+    reply = get_provider(provider_name, model).chat(
         _SYSTEM, [{"role": "user", "content": user}], max_tokens=8192,
     )
     return _parse(reply, archive_name)

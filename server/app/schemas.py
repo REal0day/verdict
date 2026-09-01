@@ -53,12 +53,17 @@ class TeamCreate(BaseModel):
 
 class TeamUpdate(BaseModel):
     name: str | None = None
+    # "" clears the pin and reverts to the server default.
+    ai_provider: str | None = None
+    ai_model: str | None = None
 
 
 class TeamOut(BaseModel):
     id: str
     name: str
     member_count: int = 0
+    ai_provider: str | None = None
+    ai_model: str | None = None
 
     class Config:
         from_attributes = True
@@ -412,6 +417,9 @@ class ProjectCreate(ProjectBase):
 class ProjectUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
+    # "" clears the pin and falls back to the team's choice, then the default.
+    ai_provider: str | None = None
+    ai_model: str | None = None
 
 
 class ProjectMerge(BaseModel):
@@ -436,6 +444,9 @@ class ProjectOut(ProjectBase):
     created_by: str
     created_at: dt.datetime
     updated_at: dt.datetime
+    # NULL = inherit (team, then server default).
+    ai_provider: str | None = None
+    ai_model: str | None = None
     # Viewer-relative — true when the viewer owns/belongs to this project.
     # Populated by the router; default False if omitted.
     i_am_owner: bool = False

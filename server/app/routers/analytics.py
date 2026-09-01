@@ -256,7 +256,14 @@ def analytics_chat(
         + body.prompt
     )
 
-    provider = get_provider()
+    # Aliased: this function already has a local `scope` (the data dump).
+    from ..ai import scope as ai_scope
+    choice = ai_scope.resolve(
+        db,
+        project_id=(body.product_ids[0] if body.product_ids else None),
+        user_id=viewer.id,
+    )
+    provider = get_provider(choice.provider, choice.model)
     reply = provider.chat(_SYSTEM, [{"role": "user", "content": user_msg}])
 
     generated_id: str | None = None

@@ -116,6 +116,7 @@ def _to_session(db: Session, s: models.RemoteSession) -> "SessionOut":
         harness_id=s.harness_id,
         harness_name=s.harness.name if s.harness else None,
         model=s.model,
+        cli=s.cli,
         pending_bundle=s.pending_bundle,
         turn_count=len(s.turns),
         upload_count=len(s.uploads) + n_proj,
@@ -405,6 +406,7 @@ class SessionOut(BaseModel):
     harness_id: str | None = None
     harness_name: str | None = None
     model: str | None = None
+    cli: str | None = None
     pending_bundle: bool = False
     turn_count: int
     upload_count: int = 0
@@ -916,6 +918,9 @@ class JobResult(BaseModel):
     error: str = ""
     claude_session_id: str | None = None
     workspace: str | None = None
+    # Which agent CLI produced this turn ("claude", "generic", ...). Older
+    # agents don't send it, so it stays None for them.
+    cli: str | None = None
 
 
 def _claim_pending(agent_id: str) -> "Job | None":
@@ -1179,7 +1184,11 @@ def post_result(
                 s.claude_session_id = body.claude_session_id
             if body.workspace:
                 s.cwd = body.workspace[:1024]
-                s.pending_bundle = False
+            if body.cli:
+                s.cli = body.cli[:32]
+            # Always cleared: the workspace is materialized once, and older
+            # agents don't send `cli` at all.
+            s.pending_bundle = False
             s.status = models.RemoteSessionStatus.idle
             s.last_activity_at = rp.completed_at
 

@@ -347,3 +347,59 @@ def discover_local_models(actor: models.User = Depends(get_current_user)):
                 label=label, base_url=url, reachable=False, error=type(e).__name__,
             ))
     return out
+
+
+# ---------------- model catalogue ----------------
+
+# Known-good model ids per hosted provider, for the pickers. Not exhaustive and
+# not authoritative — an operator can always type an id the server hasn't heard
+# of, which is why every picker also accepts free text.
+KNOWN_MODELS: dict[str, list[str]] = {
+    "anthropic": [
+        "claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5",
+    ],
+    "openai": ["gpt-4o", "gpt-4o-mini", "o3-mini"],
+    "gemini": ["gemini-1.5-pro", "gemini-1.5-flash"],
+    "grok": ["grok-2", "grok-2-mini"],
+}
+
+
+class ModelChoicesOut(BaseModel):
+    provider: str
+    display_name: str
+    configured: bool
+    models: list[str]
+    current: str
+
+
+@router.get("/ai/models", response_model=list[ModelChoicesOut])
+def list_models(_: models.User = Depends(get_current_user)):
+    """Model ids the pickers should offer, per provider.
+
+    For a self-hosted endpoint the list is fetched live from the endpoint
+    itself, so it reflects what is actually pulled rather than a guess. Any
+    picker built on this must still accept a free-text id.
+    """
+    out: list[ModelChoicesOut] = []
+    for name, info in PROVIDERS.items():
+        r = resolve(name)
+        choices = list(KNOWN_MODELS.get(name, []))
+        if info.self_hosted and r.base_url:
+            try:
+                resp = httpx.get(f"{r.base_url}/models", timeout=3.0)
+                if resp.status_code < 400:
+                    choices = [
+                        m.get("id") for m in (resp.json().get("data") or []) if m.get("id")
+                    ]
+            except Exception as e:  # endpoint down — fall back to what's set
+                log.info("could not list models from %s: %s", r.base_url, e)
+        if r.model and r.model not in choices:
+            choices.insert(0, r.model)
+        out.append(ModelChoicesOut(
+            provider=name,
+            display_name=info.display_name,
+            configured=is_configured(name),
+            models=choices,
+            current=r.model,
+        ))
+    return out

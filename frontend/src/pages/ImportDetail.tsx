@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
+import { useProviderName } from "@/components/AIStatus";
 import { PageHeader } from "@/components/Layout";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Input, Label, Select, Textarea } from "@/components/ui/Input";
@@ -69,6 +70,7 @@ type Plan = {
 };
 
 export function ImportDetail() {
+  const providerName = useProviderName();
   const { imp_id = "" } = useParams();
   const nav = useNavigate();
   const qc = useQueryClient();
@@ -158,18 +160,18 @@ export function ImportDetail() {
         <Card className="mt-4">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Sparkles size={14} className="text-primary" /> Ask Claude to plan this folder
+              <Sparkles size={14} className="text-primary" /> Ask {providerName} to plan this folder
             </CardTitle>
           </CardHeader>
           <CardBody className="space-y-3">
             <p className="text-sm text-fgmuted">
-              Claude will open the files it considers relevant (reports, READMEs,
+              {providerName} will open the files it considers relevant (reports, READMEs,
               notes), figure out which ones are reports vs. POCs, propose a
               product, and draft scans/runs. You'll be able to review and edit
               before anything is saved.
             </p>
             <Button onClick={() => runPlan.mutate()} disabled={runPlan.isPending}>
-              <Play size={14} /> {runPlan.isPending ? "Claude is reading…" : "Generate plan"}
+              <Play size={14} /> {runPlan.isPending ? `${providerName} is reading…` : "Generate plan"}
             </Button>
             {runPlan.isError ? (
               <p className="text-xs text-danger">

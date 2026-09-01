@@ -393,6 +393,8 @@ def plan_folder(
     *,
     existing_projects: list[dict],
     user_label: str = "",
+    provider_name: str | None = None,
+    model: str | None = None,
 ) -> tuple[dict, str]:
     """Run the planner. Returns (plan, log_text).
 
@@ -400,7 +402,7 @@ def plan_folder(
     abstraction in `ai/tools.py`. Raises if the model doesn't produce a valid
     plan within the iteration budget.
     """
-    provider = get_provider()
+    provider = get_provider(provider_name, model)
 
     files = _walk_tree(staging_root)
     if not files:

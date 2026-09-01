@@ -85,3 +85,10 @@ export function AIErrorNotice({ error, className = "" }: { error: unknown; class
     </div>
   );
 }
+
+/** Display name of the provider that will actually answer, for UI copy.
+ *  Falls back to a neutral noun before the status query resolves. */
+export function useProviderName(fallback = "the model"): string {
+  const { data } = useAIStatus();
+  return data?.display_name || fallback;
+}

@@ -473,7 +473,7 @@ function UploadToProductCard({ projectId, productName }: { projectId: string; pr
           <p className="text-xs text-fgmuted">
             Pick a folder — or a <strong>.zip</strong> of source code — of reports,
             POCs, or notes. A zip is unpacked on the server, keeping its directory
-            structure. Claude will look through everything and propose how to
+            structure. The configured model will look through everything and propose how to
             organize it — already targeting <strong>{productName}</strong>. You
             review and confirm before anything is saved.
           </p>

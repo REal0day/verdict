@@ -17,7 +17,10 @@ def _team_with_count(db: Session, t: models.Team) -> schemas.TeamOut:
         .filter(models.User.team_id == t.id)
         .scalar()
     ) or 0
-    return schemas.TeamOut(id=t.id, name=t.name, member_count=int(n))
+    return schemas.TeamOut(
+        id=t.id, name=t.name, member_count=int(n),
+        ai_provider=t.ai_provider, ai_model=t.ai_model,
+    )
 
 
 @router.post("", response_model=schemas.TeamOut, status_code=201)
@@ -66,6 +69,7 @@ def update_team(
             if db.query(models.Team).filter(models.Team.name == new_name).first():
                 raise HTTPException(409, "Team name already exists")
             t.name = new_name
+    _apply_ai_pin(t, payload)
     db.commit()
     db.refresh(t)
     return _team_with_count(db, t)
@@ -89,3 +93,24 @@ def delete_team(
     )
     db.delete(t)
     db.commit()
+
+
+def _apply_ai_pin(obj, payload: dict):
+    """Apply an ai_provider/ai_model pin from a PATCH payload.
+
+    "" clears the pin (inherit); an absent key leaves it untouched. Validated
+    against the registry so a typo can't silently route work nowhere.
+    """
+    from ..ai.base import PROVIDERS, canonical
+
+    if "ai_provider" in payload:
+        raw = (payload["ai_provider"] or "").strip()
+        if not raw:
+            obj.ai_provider = None
+        else:
+            name = canonical(raw)
+            if name not in PROVIDERS:
+                raise HTTPException(400, f"Unknown AI provider {raw!r}")
+            obj.ai_provider = name
+    if "ai_model" in payload:
+        obj.ai_model = (payload["ai_model"] or "").strip() or None

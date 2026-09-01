@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Empty } from "@/components/ui/Empty";
 import { ChatReply } from "@/components/ChatReply";
-import { AIErrorNotice, AIUnavailableNotice, useAIStatus } from "@/components/AIStatus";
+import { AIErrorNotice, AIUnavailableNotice, useAIStatus, useProviderName } from "@/components/AIStatus";
 import { Select } from "@/components/ui/Input";
 import {
   FileText, Send, Sparkles, Download, MessagesSquare, X,
@@ -642,6 +642,7 @@ function ChatPanel({
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const aiStatus = useAIStatus();
+  const providerName = useProviderName();
   const aiDown = aiStatus.data ? !aiStatus.data.configured : false;
 
   const send = useMutation({
@@ -678,16 +679,16 @@ function ChatPanel({
 
   const scopeLine =
     selected.size === 0
-      ? "No reports selected — Claude will answer using only your message."
+      ? `No reports selected — ${providerName} will answer using only your message.`
       : selected.size === totalReports
-      ? `All ${selected.size} reports selected — Claude will reason over the full set.`
-      : `${selected.size} report${selected.size === 1 ? "" : "s"} selected — Claude will reason over those.`;
+      ? `All ${selected.size} reports selected — ${providerName} will reason over the full set.`
+      : `${selected.size} report${selected.size === 1 ? "" : "s"} selected — ${providerName} will reason over those.`;
 
   return (
     <Card className="mt-6">
       <CardHeader className="flex items-center justify-between">
         <CardTitle className="flex items-center gap-2">
-          <Sparkles size={14} className="text-primary" /> Ask Claude about your reports
+          <Sparkles size={14} className="text-primary" /> Ask {providerName} about your reports
         </CardTitle>
         {turns.length ? (
           <Button variant="ghost" size="sm" onClick={() => { setTurns([]); setSessionId(null); }}>
@@ -726,7 +727,7 @@ function ChatPanel({
               </div>
             ) : null}
             <Button type="submit" disabled={send.isPending || !message.trim() || aiDown}>
-              <Send size={14} /> {send.isPending ? "Claude is thinking…" : "Send"}
+              <Send size={14} /> {send.isPending ? `${providerName} is thinking…` : "Send"}
             </Button>
             {selected.size > 0 ? (
               <Button type="button" variant="ghost" size="sm" onClick={clearSelection}>
@@ -755,6 +756,7 @@ function ChatPanel({
 }
 
 function Turn({ turn }: { turn: ChatTurn }) {
+  const providerName = useProviderName("assistant");
   return (
     <div className="space-y-2">
       <div className="bg-muted/40 border border-border rounded-md px-3 py-2 text-sm whitespace-pre-wrap">
@@ -762,7 +764,7 @@ function Turn({ turn }: { turn: ChatTurn }) {
         {turn.user}
       </div>
       <div className="bg-surface border border-border rounded-md px-3 py-2 text-sm">
-        <span className="text-xs text-fgmuted block mb-1">Claude</span>
+        <span className="text-xs text-fgmuted block mb-1">{providerName}</span>
         <ChatReply
           text={turn.assistant}
           defaultFilename={turn.generated_report?.filename}

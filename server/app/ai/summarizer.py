@@ -11,9 +11,11 @@ _SUMMARY_SYSTEM = (
 )
 
 
-def summarize(text: str, provider_name: str | None = None) -> str | None:
+def summarize(
+    text: str, provider_name: str | None = None, model: str | None = None
+) -> str | None:
     try:
-        provider = get_provider(provider_name)
+        provider = get_provider(provider_name, model)
         return provider.chat(
             _SUMMARY_SYSTEM,
             [{"role": "user", "content": text[:100_000]}],

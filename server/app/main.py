@@ -222,6 +222,19 @@ def _ensure_onboarding_column():
             "ALTER TABLE vuln_scans "
             "ADD COLUMN IF NOT EXISTS title VARCHAR(255) NOT NULL DEFAULT ''"
         ))
+        # Per-scope model pinning: a project (or a team) can choose which
+        # provider/model analyses its work. NULL = inherit the server default.
+        for tbl in ("projects", "teams"):
+            conn.execute(text(
+                f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS ai_provider VARCHAR(32)"
+            ))
+            conn.execute(text(
+                f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS ai_model VARCHAR(128)"
+            ))
+        # RemoteSession: which agent CLI produced the session.
+        conn.execute(text(
+            "ALTER TABLE remote_sessions ADD COLUMN IF NOT EXISTS cli VARCHAR(32)"
+        ))
 
     # ALTER TYPE … ADD VALUE can't run inside a transaction; needs its
     # own AUTOCOMMIT connection. Run it after the main DDL block above.

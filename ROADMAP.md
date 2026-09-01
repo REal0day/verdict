@@ -354,11 +354,15 @@ summaries, extraction and chat. This matters most for the audience the tool is
 aimed at: a small team standing up a PSIRT function, reading their own source
 code, who may not be permitted to send that code to a third-party API at all.
 
-**Status:** phases 1, 2 and 5 have landed — every feature now runs through
-the provider abstraction, each provider is configurable from the portal, and
-local/self-hosted models work both on the server's own machine and on another
-host. Phases 3 and 4 (per-team/per-project model choice, and the
-Claude-Code-only Workbench agent) are still open.
+**Status:** all five phases have landed. Every feature runs through the
+provider abstraction; each provider is configurable from the portal; local and
+self-hosted models work both on the server's own machine and on another host; a
+project or team can pin its own provider and model; and the Workbench agent
+runs a pluggable CLI rather than only Claude Code.
+
+What remains is polish rather than architecture — see the unchecked items in
+phase 5 (documenting local-model quality trade-offs, streaming for slow local
+models) and the "de-Claude" follow-ups worth doing once more adapters exist.
 
 ### Phase 1 — finish the server-side abstraction *(landed)*
 
@@ -411,31 +415,63 @@ Claude-Code-only Workbench agent) are still open.
 - [x] **Admin Settings page** is a per-provider list with the active one
       marked, a provider switcher, a test button, and a local-model scanner.
 
-### Phase 3 — choosing a provider and model per request
+### Phase 3 — choosing a provider and model per request *(landed)*
 
-- [ ] **Scope provider choice below the global default.** `default_ai_provider`
-      is process-wide. Let a team, project, or user pin a provider + model, so
-      one deployment can use a local model for source-code work and a hosted
-      one for summarisation.
-- [ ] **Actually thread `provider_name` through.** `summarizer.summarize()` and
-      `extractor.extract()` already accept it; no caller ever passes it.
-- [ ] **Serve the model list from the server.** `MODEL_OPTIONS` in
-      `frontend/src/pages/Workbench.tsx` is a hardcoded list of Claude model
-      ids. Expose the configured providers' models via the API so the picker
-      reflects the deployment.
+- [x] **Scope provider choice below the global default.** `Project` and `Team`
+      gained nullable `ai_provider` / `ai_model`. `ai/scope.py` resolves
+      most-specific-first — project, then the user's team, then the server
+      default — so one deployment can send a third-party dependency review to a
+      hosted API while the team working on first-party source uses a local
+      model.
+- [x] **Invalid pins degrade instead of failing.** A pin naming an unknown or
+      no-longer-configured provider is logged and ignored rather than raised:
+      losing a background summarisation because someone cleared an API key
+      would be a worse outcome than quietly using the default. Provider names
+      are canonicalised on write (`claude` → `anthropic`) and rejected with a
+      400 if unknown, so typos surface at the point of configuration.
+- [x] **Threaded `provider_name` through for real.** `summarize()`,
+      `extract()`, `enrich_findings()`, `analyze_component()` and
+      `plan_folder()` all accept a provider *and* a model override, and every
+      caller now resolves the scope first — report ingest, interactive
+      extraction, chat, analytics, folder-import planning and finding verdicts.
+      Previously these parameters existed but nothing ever passed them.
+- [x] **`get_provider(name, model)`** takes a model override, which is the
+      mechanism the pins use.
+- [x] **Serve the model list from the server.** `GET /settings/ai/models`
+      returns the models per configured provider; for a self-hosted endpoint it
+      asks the endpoint itself, so the list reflects what is actually pulled.
+      The Workbench picker consumes it instead of a hardcoded Claude list.
 
-### Phase 4 — de-Claude the UI and the agent
+### Phase 4 — de-Claude the UI and the agent *(landed)*
 
-- [ ] **Neutral UI copy.** Roughly six user-visible strings hardcode "Claude"
-      ("Ask Claude about your reports", "Claude is thinking…", "Drive Claude on
-      your own machine"). Drive them from the active provider's display name.
-- [ ] **Pluggable agent CLI.** The Workbench agent shells out to
-      `shutil.which("claude")` (`agent/irs_agent/remote.py:371`), so remote
-      sessions are Claude Code only. Introduce a CLI adapter interface
-      (Claude Code, Codex, Gemini CLI, aider, …) declared per agent and
-      recorded per session, so a Workbench session says which tool produced it.
-      This is the deepest coupling in the codebase and should be scoped on its
-      own.
+- [x] **Neutral UI copy.** The chat panel, import planner and assistant labels
+      name whichever provider is actually configured, via `useProviderName()`.
+      Copy that refers to the *agent CLI* is left alone deliberately — that is
+      a statement about the tool running on the operator's machine, not about
+      the server's model.
+- [x] **Pluggable agent CLI.** `agent/irs_agent/clis.py` introduces a
+      `CLIAdapter` interface covering executable discovery, argv construction
+      and output parsing:
+        - `claude` — Claude Code at full fidelity: streamed tool calls,
+          thinking blocks, resumable sessions, cost/turn accounting. Byte-for-
+          byte the previous behaviour, now behind the interface.
+        - `generic` — any other CLI, driven by an operator-supplied
+          `cli_command` template with `{prompt}` / `{model}` / `{cwd}`
+          placeholders. Output streams as plain text; no resume, because there
+          is no agreed format to parse.
+      The template is `shlex.split` **before** substitution, so a prompt
+      containing shell metacharacters stays a single inert argument and never
+      reaches a shell — pinned by a test.
+- [x] **Sessions record which CLI produced them.** `RemoteSession.cli` is set
+      from the agent's job result and shown in the session header. NULL for
+      sessions predating this, and for agents too old to report it.
+- [x] **Graceful degradation.** Asking a non-resuming CLI to resume starts a
+      fresh turn rather than failing, and an unconfigured `generic` adapter
+      returns a message telling the operator exactly which config keys to set.
+
+`generic` exists so an operator can wire up Codex, Gemini CLI, aider or an
+in-house tool today, without waiting on us and without us guessing at flags we
+cannot verify. Promoting any of them to a first-class adapter is a subclass.
 
 ### Phase 5 — local and self-hosted models *(landed early)*
 

@@ -29,6 +29,7 @@ type SessionRow = {
   status: "idle" | "running" | "archived"; claude_session_id: string | null;
   project_id: string | null; project_name: string | null;
   harness_id: string | null; harness_name: string | null; model: string | null;
+  cli: string | null;
   pending_bundle: boolean;
   turn_count: number; upload_count: number; upload_bytes: number;
   created_at: string; last_activity_at: string;
@@ -49,15 +50,38 @@ type Ev =
   | { type: "bundle"; phase: "download" | "extract" | "ready"; dest: string; files?: number }
   | { type: "error" | "text" | "truncated"; text?: string };
 
-// Models offered in the session picker. "" = let the agent/CLI default decide.
-// The chosen id is passed straight to `claude --model` on the agent host, so it
-// must be a model that host's CLI/account can serve.
-const MODEL_OPTIONS: { value: string; label: string }[] = [
-  { value: "", label: "Agent default" },
-  { value: "claude-opus-4-8", label: "Opus 4.8" },
-  { value: "claude-sonnet-4-6", label: "Sonnet 4.6" },
-  { value: "claude-haiku-4-5", label: "Haiku 4.5" },
-];
+// Models offered in the session picker come from the server
+// (`GET /settings/ai/models`), so the list reflects the configured providers
+// — including a self-hosted endpoint's actually-pulled models — instead of a
+// hardcoded vendor list. "" = let the agent/CLI default decide. The chosen id
+// is passed straight to the agent CLI's --model, so it must be one that
+// host can serve.
+type ModelChoices = {
+  provider: string;
+  display_name: string;
+  configured: boolean;
+  models: string[];
+  current: string;
+};
+
+function useModelOptions() {
+  const q = useQuery({
+    queryKey: ["ai-models"],
+    queryFn: () => api<ModelChoices[]>("/settings/ai/models"),
+    staleTime: 300_000,
+    retry: false,
+  });
+  const options: { value: string; label: string }[] = [
+    { value: "", label: "Agent default" },
+  ];
+  for (const p of q.data ?? []) {
+    if (!p.configured) continue;
+    for (const m of p.models) {
+      options.push({ value: m, label: `${m} — ${p.display_name}` });
+    }
+  }
+  return options;
+}
 
 type AssistantBlock =
   | { type: "text"; text: string }
@@ -353,6 +377,7 @@ function NewSessionButton({ agents, onCreated }: {
     queryFn: () => api<Project[]>("/projects"),
     enabled: open,
   });
+  const modelOptions = useModelOptions();
 
   useEffect(() => {
     if (!agentId && agents[0]) setAgentId(agents[0].id);
@@ -422,7 +447,7 @@ function NewSessionButton({ agents, onCreated }: {
       <div>
         <Label>Model</Label>
         <Select value={model} onChange={(e) => setModel(e.target.value)}>
-          {MODEL_OPTIONS.map((m) => (
+          {modelOptions.map((m) => (
             <option key={m.value} value={m.value}>{m.label}</option>
           ))}
         </Select>
@@ -520,6 +545,7 @@ function SessionView({ sid, agentById }: {
             {agent?.hostname || "unknown"}
             {agent?.last_ip ? ` · ${agent.last_ip}` : null}
             {s.cwd ? <> · <code>{s.cwd}</code></> : null}
+            {s.cli ? ` · via ${s.cli}` : null}
             {s.claude_session_id ? " · resumable" : null}
           </div>
         </div>
@@ -544,7 +570,7 @@ function SessionView({ sid, agentById }: {
         {s.model ? (
           <Badge tone="muted" className="gap-1" title={`Model: ${s.model}`}>
             <Cpu size={11} />
-            {MODEL_OPTIONS.find((m) => m.value === s.model)?.label ?? s.model}
+            {s.model}
           </Badge>
         ) : null}
         <button type="button" onClick={() => setShowFiles((v) => !v)}

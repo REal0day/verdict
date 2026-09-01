@@ -46,6 +46,12 @@ class Project(Base):
         DateTime(timezone=True), default=_now, onupdate=_now
     )
 
+    # Optional per-project model pin. NULL = inherit the team's choice, then
+    # the server default. Lets one product be analysed by a local model while
+    # another uses a hosted one.
+    ai_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    ai_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
     members: Mapped[list["User"]] = relationship(
         secondary="project_members", back_populates="projects"
     )
@@ -68,6 +74,10 @@ class Team(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    # Team-level model pin; a project's own choice wins over this.
+    ai_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    ai_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     members: Mapped[list["User"]] = relationship(back_populates="team")
 
@@ -738,6 +748,9 @@ class RemoteSession(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
     title: Mapped[str] = mapped_column(String(255), default="", nullable=False)
     cwd: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    # Which agent CLI ran this session ("claude", "generic", ...). NULL for
+    # sessions created before the CLI became pluggable.
+    cli: Mapped[str | None] = mapped_column(String(32), nullable=True)
     project_id: Mapped[str | None] = mapped_column(
         ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True
     )

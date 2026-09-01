@@ -21,6 +21,7 @@ import httpx
 import platformdirs
 
 from . import __version__
+from .clis import get_adapter
 from .config import AgentConf
 
 log = logging.getLogger("irs-agent.remote")
@@ -173,21 +174,28 @@ def _run_job(conf: AgentConf, client: httpx.Client, job: dict,
                 _post_result(client, rid, False, "",
                              f"workspace materialize failed: {e}", None, None)
                 return
-        ok, out, err, sid = _run_claude(
+        adapter = get_adapter(
+            getattr(conf, "cli", "claude") or "claude",
+            getattr(conf, "cli_command", "") or "",
+        )
+        ok, out, err, sid = _run_cli(
+            adapter,
             job.get("prompt", ""), cwd,
             resume=job.get("resume"),
             timeout_s=getattr(conf, "remote_timeout_s", 1800),
             anthropic_api_key=conf.anthropic_api_key,
             sink=sink,
             # per-session model from the portal wins; agent config is the fallback
-            model=job.get("model") or getattr(conf, "claude_model", ""),
+            model=job.get("model") or getattr(conf, "cli_model", "")
+                  or getattr(conf, "claude_model", ""),
             # engagement authorisation for active-testing sessions (server-decided)
             append_system_prompt=job.get("append_system_prompt") or "",
             # active-testing sessions run headless with no one to grant approvals
             bypass_permissions=bool(job.get("bypass_permissions")),
         )
         sink.close()
-        _post_result(client, rid, ok, out, err, sid, workspace)
+        _post_result(client, rid, ok, out, err, sid, workspace,
+                     cli=adapter.name)
     except Exception as e:
         log.exception("job %s crashed", rid)
         _post_result(client, rid, False, "", f"agent crashed: {e}", None, None)
@@ -287,9 +295,11 @@ class _EventSink:
 
 
 def _post_result(client: httpx.Client, rid: str, ok: bool, out: str, err: str,
-                 claude_sid: str | None, workspace: str | None):
+                 claude_sid: str | None, workspace: str | None,
+                 cli: str | None = None):
     body = {"ok": ok, "output": out, "error": err,
-            "claude_session_id": claude_sid, "workspace": workspace}
+            "claude_session_id": claude_sid, "workspace": workspace,
+            "cli": cli}
     for attempt in range(4):
         try:
             r = client.post(f"/agent/remote/{rid}/result", json=body, timeout=30)
@@ -309,109 +319,64 @@ def _decode(b) -> str:
     return str(b)
 
 
-def _hint(inp: dict) -> str:
-    for k in ("file_path", "path", "command", "pattern", "url",
-              "query", "description"):
-        v = inp.get(k)
-        if v:
-            return str(v)[:200]
-    return ""
-
-
-def _slim(ev: dict) -> dict | None:
-    """Reduce a raw stream-json event to just what the UI needs."""
-    t = ev.get("type")
-    if t == "system":
-        return {"type": "system", "subtype": ev.get("subtype"),
-                "session_id": ev.get("session_id"),
-                "model": ev.get("model"), "cwd": ev.get("cwd")}
-    if t == "assistant":
-        content = (ev.get("message") or {}).get("content") or []
-        out: list[dict] = []
-        for c in content:
-            ct = c.get("type")
-            if ct == "text" and c.get("text"):
-                out.append({"type": "text", "text": c["text"]})
-            elif ct == "thinking":
-                txt = (c.get("thinking") or "").strip()
-                if txt:
-                    out.append({"type": "thinking", "text": txt[:_TOOL_PREVIEW]})
-            elif ct == "tool_use":
-                out.append({"type": "tool_use", "name": c.get("name", "?"),
-                            "hint": _hint(c.get("input") or {})})
-        return {"type": "assistant", "content": out} if out else None
-    if t == "user":
-        content = (ev.get("message") or {}).get("content") or []
-        out = []
-        for c in content:
-            if c.get("type") == "tool_result":
-                raw = c.get("content")
-                if isinstance(raw, list):
-                    txt = "".join(p.get("text", "") for p in raw
-                                  if isinstance(p, dict))
-                else:
-                    txt = str(raw or "")
-                out.append({"type": "tool_result",
-                            "is_error": bool(c.get("is_error")),
-                            "preview": txt[:_TOOL_PREVIEW]})
-        return {"type": "tool_result", "results": out} if out else None
-    if t == "result":
-        return {"type": "result", "subtype": ev.get("subtype"),
-                "duration_ms": ev.get("duration_ms"),
-                "total_cost_usd": ev.get("total_cost_usd"),
-                "num_turns": ev.get("num_turns")}
-    return None
-
-
-def _run_claude(prompt: str, cwd: str | None, *, resume: str | None,
-                timeout_s: int, anthropic_api_key: str, sink: _EventSink,
-                model: str = "", append_system_prompt: str = "",
-                bypass_permissions: bool = False
-                ) -> tuple[bool, str, str, str | None]:
-    exe = shutil.which("claude")
+def _run_cli(adapter, prompt: str, cwd: str | None, *, resume: str | None,
+             timeout_s: int, anthropic_api_key: str, sink: _EventSink,
+             model: str = "", append_system_prompt: str = "",
+             bypass_permissions: bool = False
+             ) -> tuple[bool, str, str, str | None]:
+    """Run one turn through a CLI adapter and stream its events to the server."""
+    label = adapter.display_name
+    exe = adapter.find_exe()
     if not exe:
-        return False, "", "`claude` CLI not found on PATH on the agent host", None
+        if adapter.name == "generic" and not getattr(adapter, "command", ""):
+            return False, "", (
+                "No agent CLI configured. Set `cli` and `cli_command` in the "
+                "agent config (e.g. cli=generic, "
+                'cli_command="aider --message {prompt}").'
+            ), None
+        return False, "", f"{label} executable not found on PATH on the agent host", None
+
     workdir = Path(cwd).expanduser() if cwd else Path.home()
     if not workdir.is_dir():
         return False, "", f"working directory does not exist: {workdir}", None
 
-    argv = [exe, "-p", "--verbose", "--output-format", "stream-json"]
-    if model:
-        argv += ["--model", model]
-    if append_system_prompt:
-        argv += ["--append-system-prompt", append_system_prompt]
-    if bypass_permissions:
-        # Active-testing sessions run headless — no one can answer permission
-        # prompts, and the harness must pip-install + run python/curl/nmap/etc.
-        argv += ["--dangerously-skip-permissions"]
-    if resume:
-        argv += ["--resume", resume]
-    argv.append(prompt)
+    if resume and not adapter.supports_resume:
+        # Better to start a fresh turn than to fail: the caller keeps history.
+        log.info("%s cannot resume; starting a fresh turn", label)
+        resume = None
+
+    launch = adapter.build(
+        exe=exe, prompt=prompt, cwd=str(workdir), model=model, resume=resume,
+        append_system_prompt=append_system_prompt,
+        bypass_permissions=bypass_permissions,
+    )
 
     env = os.environ.copy()
     if anthropic_api_key:
         env["ANTHROPIC_API_KEY"] = anthropic_api_key
+    env.update(launch.env)
 
-    log.info("running claude in %s (timeout %ds, resume=%s, model=%s, active_testing=%s, skip_perms=%s)",
-             workdir, timeout_s, bool(resume), model or "<cli-default>",
-             bool(append_system_prompt), bool(bypass_permissions))
+    log.info("running %s in %s (timeout %ds, resume=%s, model=%s, skip_perms=%s)",
+             label, workdir, timeout_s, bool(resume), model or "<cli-default>",
+             bool(bypass_permissions))
     sink.emit({"type": "launch", "cwd": str(workdir), "resume": bool(resume),
-               "model": model or None, "active_testing": bool(append_system_prompt)})
+               "model": model or None, "cli": adapter.name,
+               "active_testing": bool(append_system_prompt)})
 
     try:
         p = subprocess.Popen(
-            argv, cwd=str(workdir),
+            launch.argv, cwd=str(workdir),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, bufsize=1, env=env,
         )
     except Exception as e:
-        return False, "", f"failed to launch claude: {e}", None
+        return False, "", f"failed to launch {label}: {e}", None
 
     deadline = time.monotonic() + timeout_s
     final_text: str | None = None
     final_err: str | None = None
-    claude_sid: str | None = resume
+    session_id: str | None = resume
     text_acc: list[str] = []
 
     try:
@@ -419,49 +384,38 @@ def _run_claude(prompt: str, cwd: str | None, *, resume: str | None,
         for line in p.stdout:
             if time.monotonic() > deadline:
                 p.kill()
-                final_err = f"claude timed out after {timeout_s}s in {workdir}"
+                final_err = f"{label} timed out after {timeout_s}s in {workdir}"
                 sink.emit({"type": "error", "text": final_err})
                 break
             line = line.strip()
             if not line:
                 continue
-            try:
-                ev = json.loads(line)
-            except Exception:
-                sink.emit({"type": "text", "text": line[:500]})
-                continue
-            t = ev.get("type")
-            if t == "system" and ev.get("session_id"):
-                claude_sid = ev["session_id"]
-            if t == "result":
-                if ev.get("subtype") == "success":
-                    final_text = str(ev.get("result") or "")
-                else:
-                    final_err = str(ev.get("result") or ev.get("error")
-                                     or ev.get("subtype")
-                                     or "claude reported an error")
-            if t == "assistant":
-                for c in (ev.get("message") or {}).get("content") or []:
-                    if c.get("type") == "text" and c.get("text"):
-                        text_acc.append(c["text"])
-            slim = _slim(ev)
-            if slim:
-                sink.emit(slim)
+            parsed = adapter.parse_line(line)
+            if parsed.session_id:
+                session_id = parsed.session_id
+            if parsed.text_chunk:
+                text_acc.append(parsed.text_chunk)
+            if parsed.final_text is not None:
+                final_text = parsed.final_text
+            if parsed.final_err:
+                final_err = parsed.final_err
+            for ev in parsed.events:
+                sink.emit(ev)
         rc = p.wait(timeout=10)
     except Exception as e:
         p.kill()
-        return False, "\n".join(text_acc)[:_MAX_OUTPUT], f"stream read failed: {e}", claude_sid
+        return False, "\n".join(text_acc)[:_MAX_OUTPUT], f"stream read failed: {e}", session_id
 
     stderr = _decode(p.stderr.read() if p.stderr else "")[:4000]
 
     if final_err:
         return False, "\n".join(text_acc)[:_MAX_OUTPUT], (
             final_err + (f"\n--- stderr ---\n{stderr}" if stderr else "")
-        ), claude_sid
+        ), session_id
     if rc != 0 and final_text is None:
         return False, "\n".join(text_acc)[:_MAX_OUTPUT], (
-            stderr or f"claude exited {rc}"
-        ), claude_sid
+            stderr or f"{label} exited {rc}"
+        ), session_id
 
     out = final_text if final_text is not None else "\n".join(text_acc)
-    return True, out[:_MAX_OUTPUT], "", claude_sid
+    return True, out[:_MAX_OUTPUT], "", session_id

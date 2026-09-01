@@ -801,7 +801,9 @@ def run_ai_verdict(
     ]
     prompt = "\n".join(summary_lines)
 
-    provider = get_provider()
+    from ..ai import scope
+    choice = scope.resolve(db, project_id=f.scan.project_id, user_id=viewer.id)
+    provider = get_provider(choice.provider, choice.model)
     try:
         raw = provider.chat(
             _AI_VERDICT_SYSTEM,

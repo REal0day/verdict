@@ -128,14 +128,16 @@ _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 # ----- public API -----
 
-def extract(text: str, provider_name: str | None = None) -> Optional[dict]:
+def extract(
+    text: str, provider_name: str | None = None, model: str | None = None
+) -> Optional[dict]:
     """Return the parsed extraction dict, or None if nothing useful was extracted."""
     if not text or not text.strip():
         return None
     text = text[:_MAX_INPUT]
 
     try:
-        provider = get_provider(provider_name)
+        provider = get_provider(provider_name, model)
     except Exception as e:
         log.warning("extractor: provider unavailable: %s", e)
         return None
@@ -447,6 +449,7 @@ def enrich_findings(
     source_markdown: str,
     findings: list[dict],
     provider_name: str | None = None,
+    model: str | None = None,
 ) -> list[dict]:
     """Re-extract per-finding detail from a shared source report.
 
@@ -482,7 +485,7 @@ def enrich_findings(
         + "\n```\n\nReturn the enriched JSON object."
     )
 
-    provider = get_provider(provider_name)
+    provider = get_provider(provider_name, model)
     raw = provider.chat(
         _ENRICH_SYSTEM,
         [{"role": "user", "content": user_msg}],

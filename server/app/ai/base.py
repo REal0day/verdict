@@ -167,7 +167,9 @@ def is_configured(name: str | None = None) -> bool:
     return bool(r.api_key)
 
 
-def get_provider(name: str | None = None) -> AIProvider:
+def get_provider(name: str | None = None, model: str | None = None) -> AIProvider:
+    """Build a provider. `model` overrides the provider's configured model,
+    which is how per-project / per-team pins take effect (see ai/scope.py)."""
     from .anthropic_provider import AnthropicProvider
     from .gemini_provider import GeminiProvider
     from .openai_compatible import OpenAICompatibleProvider
@@ -175,15 +177,16 @@ def get_provider(name: str | None = None) -> AIProvider:
 
     r = resolve(name)
     n = r.info.name
+    chosen_model = model or r.model
 
     if n == "anthropic":
-        return AnthropicProvider(api_key=r.api_key, model=r.model)
+        return AnthropicProvider(api_key=r.api_key, model=chosen_model)
     if n == "gemini":
-        return GeminiProvider(api_key=r.api_key, model=r.model)
+        return GeminiProvider(api_key=r.api_key, model=chosen_model)
     if n == "local":
         if not r.base_url:
             raise AIKeyMissing("Local model", "LOCAL_AI_BASE_URL")
-        if not r.model:
+        if not chosen_model:
             raise AIProviderError(
                 "Local model",
                 "No model id is set for the local endpoint.",
@@ -194,7 +197,7 @@ def get_provider(name: str | None = None) -> AIProvider:
         display_name=r.info.display_name,
         base_url=r.base_url,
         api_key=r.api_key,
-        model=r.model,
+        model=chosen_model,
         env_var=r.info.env_key,
         requires_key=r.info.requires_key,
     )

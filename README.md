@@ -156,6 +156,46 @@ Most local servers ignore `LOCAL_AI_API_KEY`; set it only if yours wants one
 planner works on a local model as well — though smaller models are noticeably
 worse at the structured extraction the findings pipeline depends on.
 
+## Choosing a model per product or team
+
+The server-wide provider is the default, not the only option. A product or a
+team can pin its own:
+
+```bash
+curl -X PATCH localhost:8000/projects/<id> -H "Authorization: Bearer $TOK" \
+  -H 'content-type: application/json' \
+  -d '{"ai_provider":"local","ai_model":"qwen2.5-coder:7b"}'
+```
+
+Resolution is most-specific-first: **product → the user's team → server
+default**. Send a third-party dependency review to a hosted API while your own
+source only ever reaches a local model, in one deployment. Set either field to
+`""` to clear it and inherit again.
+
+A pin naming a provider that isn't configured is ignored (with a log line)
+rather than failing the request — clearing an API key shouldn't silently break
+background summarisation.
+
+## Which CLI runs Workbench sessions
+
+Remote sessions shell out to a coding-agent CLI on the agent host. That CLI is
+pluggable, configured in the agent's config file:
+
+```toml
+cli = "claude"            # Claude Code: tool calls, thinking, resumable
+```
+```toml
+cli = "generic"           # anything else
+cli_command = "aider --model {model} --message {prompt}"
+```
+Placeholders: `{prompt}`, `{model}`, `{cwd}`. The template is split with
+`shlex` **before** substitution, so a prompt is always one argument and never
+reaches a shell.
+
+`generic` streams plain stdout and can't resume a session — there's no agreed
+format to parse. `claude` keeps full fidelity. Each session records which CLI
+produced it.
+
 ## Encryption model
 * **In transit:** TLS between agent ↔ server (terminate at your reverse proxy).
 * **At rest:** every report body + summary is AES-256-GCM encrypted with a
