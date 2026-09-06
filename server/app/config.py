@@ -31,6 +31,15 @@ class Settings(BaseSettings):
     # Empty-string disables local-path source (fall back to upload).
     source_mount: str = "/srv/source"
 
+    # Investigations: how many stage runs the in-process executor runs at once.
+    # The single-executor, drain-over-time model — a big case is a long queue,
+    # not a burst. Move to a Celery/RQ worker pool to scale past one process.
+    pipeline_max_concurrent: int = 2
+    # Per-file read cap for source-investigation tools (bytes).
+    pipeline_max_file_bytes: int = 256 * 1024
+    # Max tool-loop iterations before a stage gives up.
+    pipeline_max_iterations: int = 40
+
     # folder-import staging dir (one subdir per FolderImport, cleaned on confirm/cancel)
     imports_staging_dir: str = "/data/imports"
     # hard cap per upload to stop accidental DoS via huge dir picks.

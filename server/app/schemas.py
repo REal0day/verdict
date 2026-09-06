@@ -848,6 +848,7 @@ class StageRunCreate(BaseModel):
     finding_id: str | None = None   # required for non-report stages
     ai_provider: str | None = None
     ai_model: str | None = None
+    autorun: bool = True            # queue it for the executor immediately
 
 
 class CaseDetail(CaseOut):

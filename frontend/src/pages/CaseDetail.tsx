@@ -11,7 +11,7 @@ import { Input, Label, Select } from "@/components/ui/Input";
 import { statusBadge, type CaseOut } from "./Cases";
 import {
   ArrowLeft, FolderGit2, HardDrive, Upload, FolderTree, Check, AlertCircle,
-  Play, Trash2, ListChecks, FileText,
+  Play, Trash2, ListChecks, FileText, RotateCw, ChevronDown, ChevronRight, Loader2,
 } from "lucide-react";
 
 type ResolvedModel = { provider: string | null; model: string | null; source: string };
@@ -47,6 +47,12 @@ export function CaseDetail() {
     queryKey: ["case", case_id],
     queryFn: () => api<CaseDetailT>(`/cases/${case_id}`),
     enabled: !!case_id,
+    // Poll while any stage is still working so the executor's progress shows live.
+    refetchInterval: (query) => {
+      const d = query.state.data as CaseDetailT | undefined;
+      const busy = d?.stage_runs?.some((r) => r.status === "pending" || r.status === "running");
+      return busy ? 2000 : false;
+    },
   });
 
   const del = useMutation({
@@ -332,7 +338,7 @@ function StagesCard({ c, onChange }: { c: CaseDetailT; onChange: () => void }) {
                   disabled={queue.isPending || (!isReport && !findingId)}>
             <Play size={13} /> Queue
           </Button>
-          <span className="text-[11px] text-fgmuted">Queues the run; the executor drains it (not wired yet).</span>
+          <span className="text-[11px] text-fgmuted">source runs now (reads the code); other stages are coming.</span>
         </div>
         {queue.isError ? (
           <p className="text-xs text-danger">{(queue.error as any)?.detail || "Couldn't queue that stage."}</p>
@@ -341,30 +347,69 @@ function StagesCard({ c, onChange }: { c: CaseDetailT; onChange: () => void }) {
         {runs.length === 0 ? (
           <p className="text-sm text-fgmuted">No stage runs queued.</p>
         ) : (
-          <Table>
-            <THead><TR><TH>Stage</TH><TH>Target</TH><TH>Status</TH><TH>Model</TH></TR></THead>
-            <tbody>
-              {runs.map((r) => (
-                <TR key={r.id}>
-                  <TD className="font-medium">{r.stage}</TD>
-                  <TD className="text-xs text-fgmuted">
-                    {r.finding_id ? (r.finding_title || r.finding_id.slice(0, 8)) : "case-level"}
-                  </TD>
-                  <TD><Badge tone={STAGE_STATUS_TONE[r.status] ?? "default"}>{r.status}</Badge></TD>
-                  <TD className="text-xs text-fgmuted">
-                    {r.resolved ? (
-                      <span title={`resolved via ${r.resolved.source}`}>
-                        {r.resolved.provider ?? "default"}{r.resolved.model ? ` / ${r.resolved.model}` : ""}
-                        <span className="opacity-60"> ({r.resolved.source})</span>
-                      </span>
-                    ) : "—"}
-                  </TD>
-                </TR>
-              ))}
-            </tbody>
-          </Table>
+          <div className="divide-y divide-border border border-border rounded-md">
+            {runs.map((r) => <StageRow key={r.id} caseId={c.id} run={r} onChange={onChange} />)}
+          </div>
         )}
       </CardBody>
     </Card>
+  );
+}
+
+function StageRow({ caseId, run, onChange }: {
+  caseId: string; run: StageRun; onChange: () => void;
+}) {
+  const [openOut, setOpenOut] = useState(false);
+  const output = useQuery({
+    queryKey: ["stage-output", run.id],
+    queryFn: () => api<{ output: string }>(`/cases/${caseId}/stages/${run.id}/output`),
+    enabled: openOut && run.has_output,
+  });
+  const rerun = useMutation({
+    mutationFn: () => api(`/cases/${caseId}/stages/${run.id}/run`, { method: "POST" }),
+    onSuccess: onChange,
+  });
+  const running = run.status === "running" || run.status === "pending";
+
+  return (
+    <div className="text-sm">
+      <div className="flex items-center gap-3 px-3 py-2">
+        <button type="button" onClick={() => setOpenOut((v) => !v)}
+                className="text-fgmuted hover:text-fg disabled:opacity-30" disabled={!run.has_output && !run.error}>
+          {openOut ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        </button>
+        <span className="font-medium w-24">{run.stage}</span>
+        <span className="text-xs text-fgmuted flex-1 truncate">
+          {run.finding_id ? (run.finding_title || run.finding_id.slice(0, 8)) : "case-level"}
+        </span>
+        <Badge tone={STAGE_STATUS_TONE[run.status] ?? "default"}>
+          {running ? <Loader2 size={11} className="inline mr-1 animate-spin" /> : null}{run.status}
+        </Badge>
+        <span className="text-xs text-fgmuted w-40 truncate" title={run.resolved ? `via ${run.resolved.source}` : ""}>
+          {run.resolved ? `${run.resolved.provider ?? "default"}${run.resolved.model ? ` / ${run.resolved.model}` : ""}` : "—"}
+        </span>
+        <button type="button" onClick={() => rerun.mutate()} disabled={rerun.isPending || run.status === "running"}
+                title="Re-run this stage" className="text-fgmuted hover:text-primary disabled:opacity-30">
+          <RotateCw size={13} className={rerun.isPending ? "animate-spin" : ""} />
+        </button>
+      </div>
+      {openOut ? (
+        <div className="px-3 pb-3">
+          {run.error ? (
+            <div className="text-xs text-danger bg-danger/10 border border-danger/30 rounded px-2 py-1.5">
+              {run.error}
+            </div>
+          ) : output.isLoading ? (
+            <div className="text-xs text-fgmuted">Loading…</div>
+          ) : output.data?.output ? (
+            <pre className="text-xs whitespace-pre-wrap bg-muted/40 border border-border rounded p-3 max-h-96 overflow-y-auto">
+              {output.data.output}
+            </pre>
+          ) : (
+            <div className="text-xs text-fgmuted">No output yet.</div>
+          )}
+        </div>
+      ) : null}
+    </div>
   );
 }

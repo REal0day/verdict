@@ -16,7 +16,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from .. import crypto, localsource, models, schemas
+from .. import crypto, localsource, models, pipeline, schemas
 from ..ai import scope
 from ..auth import get_current_user
 from ..database import get_db
@@ -333,6 +333,34 @@ def queue_stage(
     if case.status == models.CaseStatus.intake:
         case.status = models.CaseStatus.active
     db.commit()
+    db.refresh(run)
+    if body.autorun:
+        pipeline.submit(run.id)
+    return _stage_out(db, run)
+
+
+@router.post("/{case_id}/stages/{run_id}/run", response_model=schemas.StageRunOut)
+def run_stage(
+    case_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+    viewer: models.User = Depends(get_current_user),
+):
+    """(Re)queue a stage run for the executor. Refuses while it's already
+    running so a double-click can't run it twice."""
+    case = db.get(models.Case, case_id)
+    if not case:
+        raise HTTPException(404, "case not found")
+    assert_can_edit_case(db, viewer, case)
+    run = db.get(models.StageRun, run_id)
+    if not run or run.case_id != case.id:
+        raise HTTPException(404, "stage run not found")
+    if run.status == models.StageRunStatus.running:
+        raise HTTPException(409, "that stage is already running")
+    run.status = models.StageRunStatus.pending
+    run.error = ""
+    db.commit()
+    pipeline.submit(run.id)
     db.refresh(run)
     return _stage_out(db, run)
 

@@ -631,12 +631,21 @@ constraints to resolve there:
 
 ### Wiring the stages (safest first, after the foundation)
 
-- [ ] **Source investigation** (read-only) — model greps/reads the referenced
-      source to understand the vuln; output populates `affected_component` and
-      the technical narrative. Lowest risk, built first. **Owns the local-path
-      mount + bundled executor** (see the Foundation note): pick a subdir under
-      `SOURCE_ROOT`, mounted read-only into the executor, which the server
-      auto-provisions and authenticates on startup.
+- [x] **Source investigation** (read-only) — *landed.* Because it only reads
+      files (never runs code), it runs as a **server-side provider tool-use
+      loop** over the read-only `SOURCE_ROOT` mount — no executor, no auth
+      bootstrap, no toolchain needed. `app/pipeline.py` gives the model
+      confined `list_dir` / `read_file` / `search_code` tools plus
+      `submit_analysis`, drains queued runs on an in-process thread pool
+      (`pipeline_max_concurrent`), stores the analysis on the StageRun, and
+      non-destructively sets the finding's `affected_component`. Per-stage
+      model routing applies. Verified end to end against a live
+      OpenAI-compatible model reading a real tree.
+
+      This resolves the "server vs executor mount" fork for read-only stages:
+      **the server reads the source directly** (reading is safe; only *running*
+      code needs the executor). The bundled executor + its auth/toolchain
+      unknowns now belong solely to **PoC verification** below.
 - [ ] **Remediation** — proposes a fix grounded in the source-investigation
       output; populates `Finding.remediation`.
 - [ ] **Report** — assembles impact + PoC + source + remediation into a
