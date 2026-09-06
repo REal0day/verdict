@@ -5,6 +5,8 @@ import { Layout } from "@/components/Layout";
 import { Login } from "@/pages/Login";
 import { Reports, ProductReports } from "@/pages/Reports";
 import { ReportView } from "@/pages/ReportView";
+import { Cases } from "@/pages/Cases";
+import { CaseDetail } from "@/pages/CaseDetail";
 import { Scans } from "@/pages/Scans";
 import { ScanDetail } from "@/pages/ScanDetail";
 import { FindingDetail } from "@/pages/FindingDetail";
@@ -72,6 +74,8 @@ export default function App() {
               <Route path="scans" element={<Scans />} />
               <Route path="scans/:scan_id" element={<ScanDetail />} />
               <Route path="scans/:scan_id/findings/:finding_id" element={<FindingDetail />} />
+              <Route path="cases" element={<Cases />} />
+              <Route path="cases/:case_id" element={<CaseDetail />} />
               <Route path="products" element={<Projects />} />
               <Route path="products/:project_id" element={<ProjectDetail />} />
               <Route path="products/:project_id/findings" element={<ProductFindings />} />

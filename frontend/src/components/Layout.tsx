@@ -4,7 +4,7 @@ import { cn } from "@/lib/cn";
 import {
   FileText, ShieldAlert, FolderGit2, Server, Terminal,
   LogOut, Sun, Moon, UserCircle2, Users, Users2, Wrench, BarChart3,
-  SlidersHorizontal, MessageSquareText,
+  SlidersHorizontal, MessageSquareText, Microscope,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { NotificationsBell } from "@/components/NotificationsBell";
@@ -14,6 +14,7 @@ const NAV = [
   { to: "/products",  label: "Products",  icon: FolderGit2 },
   { to: "/",          label: "Reports",   icon: FileText },
   { to: "/scans",     label: "Scans",     icon: ShieldAlert },
+  { to: "/cases",     label: "Investigations", icon: Microscope },
   { to: "/analytics", label: "Analytics", icon: BarChart3 },
   { to: "/prompts",   label: "Prompts",   icon: MessageSquareText },
   { to: "/harnesses", label: "Harnesses", icon: Wrench },
