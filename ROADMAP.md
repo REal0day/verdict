@@ -1,6 +1,10 @@
 # Verdict Roadmap
 
-Tracks known gaps and planned improvements before broader user testing of the agent.
+Tracks known gaps and planned improvements. The headline direction is
+**[Investigations](#investigations--the-vulnerability-analysis-pipeline)** —
+turning Verdict from a report store into a model-agnostic, multi-stage
+vulnerability-analysis pipeline. Earlier sections (pre-test blockers,
+model-agnostic AI) are largely landed and are what that feature builds on.
 
 ## Pre-test blockers (fix before user testing)
 
@@ -508,6 +512,137 @@ not, so it shipped alongside phases 1–2.
       minutes; the request timeout is already raised to 300s for them, but the
       UI still shows a spinner with no progress. Overlaps with the existing
       "streaming chat responses" item.
+
+## Investigations — the vulnerability-analysis pipeline
+
+The headline feature: turn Verdict from a report *store* into a report *engine*.
+A cybersecurity engineer receives a bug report and has to determine impact,
+verify the bug is real with a PoC, read the source to understand it, propose a
+remediation, and write it all up. This section makes that a first-class,
+model-agnostic, multi-stage workflow — with a different model assignable to
+each stage, because in practice one model refuses to write exploit code while
+another will, and the analyst should be able to route around that per stage.
+
+**Status:** planned. The design below is agreed; build is foundation-first.
+
+### What already exists to build on
+
+Not a green field — roughly half the machinery is in place:
+
+- **Agentic execution engine** — `RemoteSession` + agent: an agent process runs
+  a pluggable CLI (Claude Code or `generic`) with full tool access in a
+  materialised workspace, streaming tool calls / thinking back to the SPA. This
+  is the "model that writes a PoC, greps the source, runs code" engine.
+- **Active-testing authorisation** — a sentinel-gated scope
+  (`ACTIVE_TESTING_AUTHORIZED target=…`) injects an "authorised for active
+  security testing" system prompt and passes `--dangerously-skip-permissions`.
+  This is the opt-in that lets a permissive model actually run a PoC.
+- **The `Finding` schema is the output target** — it already carries
+  `proof_of_concept`, `steps_to_reproduce`, `remediation`, `affected_component`,
+  `cwe`/`cve`, `severity`, plus a separate AI verdict + rationale.
+- **Source into a workspace** — `ProjectFile` / `HarnessFile` / `SessionUpload`
+  are tarred and materialised on the agent. Upload-only today; no local-path
+  reference and no git clone.
+- **Model routing** — per-project / per-team / per-session model selection and
+  `get_provider(provider, model)` are done (see the Model-agnostic section);
+  per-stage routing extends the same scope resolver.
+
+### Design decisions (agreed)
+
+- **A Case is a new object, not an extension of `VulnScan`.** `VulnScan` is a
+  batch-scan *summary*; a Case is a single-bug *investigation* that produces one
+  or more `Finding`s. Kept separate.
+- **Execution never runs in the server container.** The server holds the AES
+  master key and the whole DB; running exploit code there is unacceptable for a
+  security tool. Execution runs in a **bundled local executor** — the existing
+  agent, auto-started by `docker compose` as a sibling service, pre-registered,
+  pointed at a code directory chosen in the wizard. "Spin up the webapp and it
+  works on this machine" with zero extra install; the same agent pattern makes
+  "executor on another machine" nearly free later.
+- **PoC verification is configurable per case**, defaulting to **draft-only**
+  (the model writes the PoC + repro steps, a human runs it), with opt-in
+  **auto-execution** gated by the active-testing authorisation.
+- **Per-stage model routing with a case-wide default.** Set one model for the
+  whole case, or override individual stages (e.g. a permissive local model for
+  the PoC stage, a strong hosted model for the report).
+
+### The shape
+
+```
+Bug report ─▶ Case ─▶ [ Impact · PoC verify · Source investigation · Remediation · Report ] ─▶ Finding(+report)
+                         each stage: own model, own status; output feeds the next
+```
+
+Reasoning-only stages (impact, remediation draft, report) can run as a
+server-side provider call; execution stages (PoC verify, source investigation)
+run as an agent session because they need to run code and traverse a real tree.
+Per-stage routing spans both.
+
+### Foundation (build first)
+
+- [ ] **Data model.** `Case` (inbound bug-report text, product/source link,
+      case-default provider+model, status) + `CaseStage` (type, assigned
+      provider+model, status, input context, output, link to the session/call
+      that produced it) + `SourceRef` (how this case's code is obtained).
+      Migrations via the existing `_ensure_*_column` DDL bumps until Alembic
+      lands.
+- [ ] **Per-stage model routing.** Extend `ai/scope.py` with a stage layer:
+      `CaseStage` → `Case` default → project → team → server default. Reuses
+      `get_provider(provider, model)`; invalid/unconfigured pins degrade to the
+      next level, same as today.
+- [ ] **Source acquisition.** Three modes on a `SourceRef`:
+      - **local path** — referenced on the executor's mounted code dir, not
+        copied (this is "reference code local on disk").
+      - **remote** — git clone or archive download into executor scratch.
+        Private-repo credentials stored encrypted (reuse `crypto` + the
+        `app_settings` pattern); **SSRF guardrails**: block internal/loopback
+        IPs and cloud-metadata endpoints, host allowlist, no redirects to
+        private ranges.
+      - **upload** — the existing `ProjectFile` path.
+- [ ] **Bundled executor.** A compose `executor` service (the agent) that
+      mounts a host `SOURCE_DIR` and auto-registers with the server, so local
+      runs need no manual agent install. Execution stays out of the server's
+      security context.
+
+### Wiring the stages (safest first, after the foundation)
+
+- [ ] **Source investigation** (read-only) — model greps/reads the referenced
+      source to understand the vuln; output populates `affected_component` and
+      the technical narrative. Lowest risk, built first.
+- [ ] **Remediation** — proposes a fix grounded in the source-investigation
+      output; populates `Finding.remediation`.
+- [ ] **Report** — assembles impact + PoC + source + remediation into a
+      structured report, saved as a `generated` Report (reuses the existing
+      chat/analytics "save as report" path).
+- [ ] **Impact assessment** — severity + blast-radius reasoning over the bug
+      report and source context; populates `severity` and the impact narrative.
+- [ ] **PoC verification** (execution, built last, most careful) — draft-only by
+      default; opt-in auto-execution in a sandboxed executor workspace, network-
+      scoped via the `target=` authorisation, recording whether it reproduced.
+
+- [ ] **Wizard step.** Where's your source (host path to mount, or clone-only) +
+      default per-stage models + default execution mode.
+
+### Future pipeline additions (not in the first build)
+
+- [ ] **Batch import → one Case per vulnerability, under one product.** Import a
+      batch of vulnerabilities all associated with the same product and fan them
+      out into individual Cases (each its own investigation), created together
+      and grouped under that product, then run through the pipeline. Builds on
+      the existing folder-import / extractor machinery, which already turns a
+      document into structured findings — here each extracted finding seeds a
+      Case instead of (or in addition to) a `Finding` row.
+- [ ] **Pipeline ingress — an inbound feed of new findings.** A way to push new
+      bug reports / findings into the Case pipeline from outside: a webhook or
+      integration endpoint (bug-bounty platform, issue tracker, an email or API
+      drop) that lands a new Case in an intake state ready to run. Needs
+      authentication, per-source mapping to a product, dedup, and an intake
+      queue the analyst approves before spending model budget.
+- [ ] **Cross-case intelligence.** Once Cases accumulate, let a model reason
+      over the corpus — "have we seen this class of bug in this component
+      before", dedup against past Cases, suggest the reviewer who handled a
+      similar one. Overlaps with the existing "CISO chat over structured portal
+      data" item.
 
 ## Nice-to-have (post-blocker)
 
