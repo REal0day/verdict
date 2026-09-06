@@ -28,6 +28,7 @@ from .routers import share as r_share
 from .routers import remote as r_remote
 from .routers import settings as r_settings
 from .routers import prompts as r_prompts
+from .routers import cases as r_cases
 from .ai.errors import AIProviderError
 from .csrf import CSRFMiddleware
 
@@ -69,6 +70,7 @@ app.include_router(r_remote.sess_api)
 app.include_router(r_remote.agent_api)
 app.include_router(r_settings.router)
 app.include_router(r_prompts.router)
+app.include_router(r_cases.router)
 
 # ---- AI provider failures ----
 # Providers raise typed AIProviderError subclasses (missing key, rejected key,

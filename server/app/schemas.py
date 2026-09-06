@@ -744,3 +744,114 @@ class ProjectInvitePreview(BaseModel):
     inviter_email: str = ""
     expires_at: dt.datetime | None = None
     status: str = "active"  # active|expired|used_up|revoked|unknown
+
+
+# ---- Investigations pipeline ----
+
+class CaseSourceIn(BaseModel):
+    kind: str                       # none | local_path | remote_git | remote_archive | upload
+    local_path: str | None = None
+    remote_url: str | None = None
+    ref: str | None = None
+    credential_id: str | None = None
+
+
+class CaseSourceOut(BaseModel):
+    kind: str
+    local_path: str
+    remote_url: str
+    ref: str
+    status: str
+    workspace_key: str
+    detail: str
+
+    class Config:
+        from_attributes = True
+
+
+class CaseCreate(BaseModel):
+    title: str = ""
+    project_id: str | None = None
+    report_text: str | None = None          # inbound bug report (stored encrypted)
+    ai_provider: str | None = None
+    ai_model: str | None = None
+    poc_auto_execute: bool = False
+    # Optionally promote an existing scan into this case instead of creating a
+    # fresh empty one.
+    scan_id: str | None = None
+    source: CaseSourceIn | None = None
+
+
+class CaseUpdate(BaseModel):
+    title: str | None = None
+    status: str | None = None
+    project_id: str | None = None
+    ai_provider: str | None = None
+    ai_model: str | None = None
+    poc_auto_execute: bool | None = None
+    report_text: str | None = None
+
+
+class CaseOut(BaseModel):
+    id: str
+    user_id: str
+    project_id: str | None
+    project_name: str | None = None
+    scan_id: str | None
+    title: str
+    status: str
+    ai_provider: str | None
+    ai_model: str | None
+    poc_auto_execute: bool
+    finding_count: int = 0
+    stage_run_count: int = 0
+    pending_stage_count: int = 0
+    has_report: bool = False
+    created_at: dt.datetime
+    updated_at: dt.datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ResolvedModel(BaseModel):
+    """What model a stage would actually use, and why — for the UI."""
+    provider: str | None            # None = server default provider
+    model: str | None               # None = that provider's configured model
+    source: str                     # stage | case | project | team | default
+
+
+class StageRunOut(BaseModel):
+    id: str
+    case_id: str
+    finding_id: str | None
+    finding_title: str | None = None
+    stage: str
+    status: str
+    ai_provider: str | None
+    ai_model: str | None
+    resolved: ResolvedModel | None = None
+    session_id: str | None
+    has_output: bool = False
+    error: str
+    created_at: dt.datetime
+    updated_at: dt.datetime
+    started_at: dt.datetime | None
+    completed_at: dt.datetime | None
+
+    class Config:
+        from_attributes = True
+
+
+class StageRunCreate(BaseModel):
+    stage: str                      # impact | poc | source | remediation | report
+    finding_id: str | None = None   # required for non-report stages
+    ai_provider: str | None = None
+    ai_model: str | None = None
+
+
+class CaseDetail(CaseOut):
+    report_text: str | None = None
+    source: CaseSourceOut | None = None
+    findings: list[FindingOut] = []
+    stage_runs: list[StageRunOut] = []

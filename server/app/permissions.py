@@ -137,3 +137,37 @@ def assert_can_edit_scan(db: Session, viewer: models.User, scan: models.VulnScan
         if run and run.project_id and run.project_id in project_ids:
             return
     raise HTTPException(status.HTTP_403_FORBIDDEN, "Not allowed")
+
+
+# ---------------- cases (Investigations pipeline) ----------------
+
+def scope_cases(q: Query, db: Session, viewer: models.User) -> Query:
+    """Cases follow the same rule as everything else: own, team, or a project
+    the viewer belongs to; admins see all."""
+    ids = visible_user_ids(db, viewer)
+    if ids is None:
+        return q
+    project_ids = _visible_project_ids(viewer)
+    if not project_ids:
+        return q.filter(models.Case.user_id.in_(ids))
+    return q.filter(
+        (models.Case.user_id.in_(ids)) | (models.Case.project_id.in_(project_ids))
+    )
+
+
+def assert_can_view_case(db: Session, viewer: models.User, case: models.Case):
+    ids = visible_user_ids(db, viewer)
+    if ids is None or case.user_id in ids:
+        return
+    if case.project_id and case.project_id in _visible_project_ids(viewer):
+        return
+    raise HTTPException(status.HTTP_403_FORBIDDEN, "Not allowed")
+
+
+def assert_can_edit_case(db: Session, viewer: models.User, case: models.Case):
+    """Admin, case owner, or a member of the case's project can edit."""
+    if viewer.role == Role.admin or case.user_id == viewer.id:
+        return
+    if case.project_id and case.project_id in _visible_project_ids(viewer):
+        return
+    raise HTTPException(status.HTTP_403_FORBIDDEN, "Not allowed")
