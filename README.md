@@ -1,5 +1,7 @@
 # Verdict — AI Report Server
 
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
+
 > Pre-test status: see [ROADMAP.md](./ROADMAP.md) for known gaps (UI polish,
 > chat loading indicator, user/team management screens) that should land
 > before broad agent testing.
@@ -226,3 +228,13 @@ The reply is stored as a `source_tool=generated` report under the caller's user.
 server/   FastAPI app, AI providers, Dockerfile
 agent/    cross-platform collector (pip-installable, `irs-agent` CLI)
 ```
+
+## License
+
+Apache License 2.0 — see [LICENSE](./LICENSE) and [NOTICE](./NOTICE).
+
+Apache-2.0 rather than a copyleft licence on purpose: this is meant to be
+deployed by security teams inside companies, and AGPL/GPL is blocked outright
+by many corporate legal departments. Apache-2.0's express patent grant is also
+what procurement review usually looks for. You can run it, modify it, and
+deploy it commercially without publishing your changes.
