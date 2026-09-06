@@ -56,15 +56,37 @@ def _valid(provider: str | None) -> str | None:
     return name
 
 
+def _pin(provider: str | None, model: str | None, source: str) -> ScopedChoice | None:
+    """Turn a raw (provider, model) pin into a ScopedChoice, or None to fall through.
+
+    Rules:
+      - a provider is named and usable   -> pin it (with the model if given)
+      - a provider is named but unusable -> the whole pin is void; the model
+        was chosen *for* that provider and is meaningless on another, so it
+        dies with it (fall through to the next scope level)
+      - only a model is given            -> apply it to whatever provider is
+        already active
+      - nothing usable                   -> None
+    """
+    if provider:
+        name = _valid(provider)
+        if not name:
+            return None
+        return ScopedChoice(name, model or None, source)
+    if model:
+        return ScopedChoice(None, model, source)
+    return None
+
+
 def for_project(db: Session, project_id: str | None) -> ScopedChoice:
     from .. import models
 
     if project_id:
         proj = db.get(models.Project, project_id)
-        if proj and (proj.ai_provider or proj.ai_model):
-            p = _valid(proj.ai_provider)
-            if p or proj.ai_model:
-                return ScopedChoice(p, proj.ai_model or None, "project")
+        if proj:
+            c = _pin(proj.ai_provider, proj.ai_model, "project")
+            if c:
+                return c
     return DEFAULT
 
 
@@ -75,10 +97,10 @@ def for_user(db: Session, user_id: str | None) -> ScopedChoice:
         user = db.get(models.User, user_id)
         if user and user.team_id:
             team = db.get(models.Team, user.team_id)
-            if team and (team.ai_provider or team.ai_model):
-                p = _valid(team.ai_provider)
-                if p or team.ai_model:
-                    return ScopedChoice(p, team.ai_model or None, "team")
+            if team:
+                c = _pin(team.ai_provider, team.ai_model, "team")
+                if c:
+                    return c
     return DEFAULT
 
 
@@ -90,3 +112,48 @@ def resolve(
     if not choice.is_default:
         return choice
     return for_user(db, user_id)
+
+
+# --------------------------------------------------------------------- cases
+
+def for_case(db: Session, case_id: str | None) -> ScopedChoice:
+    from .. import models
+
+    if case_id:
+        case = db.get(models.Case, case_id)
+        if case:
+            c = _pin(case.ai_provider, case.ai_model, "case")
+            if c:
+                return c
+    return DEFAULT
+
+
+def for_stage(db: Session, stage_run_id: str | None) -> ScopedChoice:
+    """Resolve the model for one pipeline stage.
+
+    Order, most specific first: the StageRun's own pin, then its Case's default,
+    then the Case's project, then the case owner's team, then the server
+    default. Invalid or unconfigured pins fall through, same as elsewhere.
+    """
+    from .. import models
+
+    if not stage_run_id:
+        return DEFAULT
+    stage = db.get(models.StageRun, stage_run_id)
+    if not stage:
+        return DEFAULT
+
+    c = _pin(stage.ai_provider, stage.ai_model, "stage")
+    if c:
+        return c
+
+    case = db.get(models.Case, stage.case_id)
+    if not case:
+        return DEFAULT
+    c = _pin(case.ai_provider, case.ai_model, "case")
+    if c:
+        return c
+    choice = for_project(db, case.project_id)
+    if not choice.is_default:
+        return choice
+    return for_user(db, case.user_id)

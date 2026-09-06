@@ -926,3 +926,182 @@ class PromptTemplate(Base):
     updated_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), default=_now, onupdate=_now
     )
+
+
+# ---------------------------------------------------------------------------
+# Investigations pipeline (foundation)
+#
+# A Case is the multi-finding container for a vulnerability investigation. It
+# composes an existing VulnScan (so Findings and their visibility/permissions
+# are reused, not duplicated) and adds the pipeline state: the inbound bug
+# report, a source reference, a case-wide default model, and per-Finding
+# StageRuns. No execution logic here — this is the schema the pipeline runs on.
+# ---------------------------------------------------------------------------
+
+class CaseStatus(str, enum.Enum):
+    intake = "intake"        # created, not yet started
+    active = "active"        # stages running / queued
+    blocked = "blocked"      # needs a human (e.g. missing source, auth)
+    done = "done"
+    archived = "archived"
+
+
+class CaseSourceKind(str, enum.Enum):
+    none = "none"            # no source attached yet
+    local_path = "local_path"    # a path on the executor's mounted code dir
+    remote_git = "remote_git"    # git clone
+    remote_archive = "remote_archive"  # tarball/zip download
+    upload = "upload"        # the existing ProjectFile upload path
+
+
+class SourceStatus(str, enum.Enum):
+    none = "none"
+    pending = "pending"      # queued to fetch
+    fetching = "fetching"
+    ready = "ready"          # materialised, executor can see it
+    error = "error"
+
+
+class StageType(str, enum.Enum):
+    impact = "impact"                # severity / blast-radius reasoning
+    poc = "poc"                      # write (+ optionally run) a PoC
+    source = "source"                # read the source to understand the bug
+    remediation = "remediation"      # propose a fix
+    report = "report"                # assemble the case-level write-up
+
+
+class StageRunStatus(str, enum.Enum):
+    pending = "pending"      # queued for the executor
+    running = "running"
+    done = "done"
+    error = "error"
+    skipped = "skipped"
+
+
+class Case(Base):
+    """One vulnerability investigation: bug report in, Finding(s) + report out.
+
+    Composes a VulnScan (`scan_id`) rather than re-implementing findings, so a
+    Case's findings ARE the scan's findings — `case.scan.finding_rows`. A batch
+    import for one product is one Case with N findings; a single uploaded report
+    is the same object.
+    """
+    __tablename__ = "cases"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    # The product/source this case is about.
+    project_id: Mapped[str | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # The findings live on this scan (reuses everything). Created with the case,
+    # or an existing scan promoted into one.
+    scan_id: Mapped[str | None] = mapped_column(
+        ForeignKey("vuln_scans.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    title: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    # Inbound bug-report text, encrypted at rest like Report.content_enc.
+    report_enc: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    status: Mapped[CaseStatus] = mapped_column(
+        Enum(CaseStatus), default=CaseStatus.intake, nullable=False
+    )
+    # Case-wide default model. NULL = inherit project -> team -> server default.
+    # A StageRun's own pin overrides this per stage.
+    ai_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    ai_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Default PoC mode for this case: False = draft only (a human runs it),
+    # True = opt-in auto-execution (still gated by active-testing authorisation).
+    poc_auto_execute: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+    scan: Mapped["VulnScan | None"] = relationship()
+    project: Mapped["Project | None"] = relationship()
+    source: Mapped["CaseSource | None"] = relationship(
+        back_populates="case", uselist=False, cascade="all, delete-orphan"
+    )
+    stage_runs: Mapped[list["StageRun"]] = relationship(
+        back_populates="case", cascade="all, delete-orphan"
+    )
+
+
+class CaseSource(Base):
+    """How a Case's code is obtained. One per case (for now).
+
+    Foundation models the columns; the fetch/clone logic lands with source
+    acquisition. `workspace_key` is where the materialised tree lives on the
+    executor once ready.
+    """
+    __tablename__ = "case_sources"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    case_id: Mapped[str] = mapped_column(
+        ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
+    )
+    kind: Mapped[CaseSourceKind] = mapped_column(
+        Enum(CaseSourceKind), default=CaseSourceKind.none, nullable=False
+    )
+    # local_path: absolute path on the executor's mounted code dir.
+    local_path: Mapped[str] = mapped_column(String(1024), default="", nullable=False)
+    # remote_git / remote_archive: the URL to fetch.
+    remote_url: Mapped[str] = mapped_column(String(1024), default="", nullable=False)
+    # branch / tag / commit for git.
+    ref: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    # Reference to an encrypted credential row (creds table lands later). NULL
+    # for public sources.
+    credential_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    status: Mapped[SourceStatus] = mapped_column(
+        Enum(SourceStatus), default=SourceStatus.none, nullable=False
+    )
+    # Where the materialised tree lives on the executor once ready.
+    workspace_key: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    # Human-readable detail: last error, commit resolved to, file count, etc.
+    detail: Mapped[str] = mapped_column(Text, default="", nullable=False)
+
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+    case: Mapped["Case"] = relationship(back_populates="source")
+
+
+class StageRun(Base):
+    """One run of one pipeline stage.
+
+    Most stages attach to a Finding (impact / poc / source / remediation); the
+    `report` stage is case-level, so `finding_id` is nullable. Reruns create new
+    rows — the table is an audit trail, latest-by-created_at wins. Queued rows
+    (`pending`) are what the single executor drains over time.
+    """
+    __tablename__ = "stage_runs"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    case_id: Mapped[str] = mapped_column(
+        ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    finding_id: Mapped[str | None] = mapped_column(
+        ForeignKey("findings.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    stage: Mapped[StageType] = mapped_column(Enum(StageType), nullable=False)
+    status: Mapped[StageRunStatus] = mapped_column(
+        Enum(StageRunStatus), default=StageRunStatus.pending, nullable=False, index=True
+    )
+    # Per-stage model pin. NULL = inherit case -> project -> team -> server.
+    ai_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    ai_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # If the stage ran as an agent session, which one (for the transcript).
+    session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # The stage's produced text, encrypted at rest.
+    output_enc: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    error: Mapped[str] = mapped_column(Text, default="", nullable=False)
+
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+    started_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    case: Mapped["Case"] = relationship(back_populates="stage_runs")
+    finding: Mapped["Finding | None"] = relationship()
