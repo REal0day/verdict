@@ -591,39 +591,52 @@ server-side provider call; execution stages (PoC verify, source investigation)
 run as an agent session because they need to run code and traverse a real tree.
 Per-stage routing spans both.
 
-### Foundation (build first)
+### Foundation
 
-- [ ] **Data model.** `Case` (inbound bug-report text, product/source link,
-      case-default provider+model, status) `→ Finding (many)`, and per Finding a
-      `StageRun` (stage type, assigned provider+model, queue status, input
-      context, output, link to the session/provider call that produced it) plus
-      `SourceRef` on the Case (how its code is obtained). Stage-runs are queued
-      and drained by the single executor. `Finding` already carries the output
-      columns; the new tables track the process. Migrations via the existing
-      `_ensure_*_column` DDL bumps until Alembic lands.
-- [ ] **Per-stage model routing.** Extend `ai/scope.py` with a stage layer:
-      `CaseStage` → `Case` default → project → team → server default. Reuses
-      `get_provider(provider, model)`; invalid/unconfigured pins degrade to the
-      next level, same as today.
-- [ ] **Source acquisition.** Three modes on a `SourceRef`:
-      - **local path** — referenced on the executor's mounted code dir, not
-        copied (this is "reference code local on disk").
-      - **remote** — git clone or archive download into executor scratch.
-        Private-repo credentials stored encrypted (reuse `crypto` + the
-        `app_settings` pattern); **SSRF guardrails**: block internal/loopback
-        IPs and cloud-metadata endpoints, host allowlist, no redirects to
-        private ranges.
-      - **upload** — the existing `ProjectFile` path.
-- [ ] **Bundled executor.** A compose `executor` service (the agent) that
-      mounts a host `SOURCE_DIR` and auto-registers with the server, so local
-      runs need no manual agent install. Execution stays out of the server's
-      security context.
+- [x] **Data model.** `Case → Finding (many)` (Case composes an existing
+      `VulnScan`, so findings + their RBAC are reused), `CaseSource`, and
+      per-Finding `StageRun` (queued, drained over time). Encrypted bug report,
+      case-wide default model, per-run pins. All five enum types + tables built
+      by `create_all`, verified in Postgres. `server/app/models.py`.
+- [x] **Per-stage model routing.** `ai/scope.py` `for_stage()` resolves
+      stage → case → project → team → server default; invalid/unconfigured pins
+      degrade. Unified every scope level through a corrected `_pin` (a pin
+      naming an unusable provider now drops its model too).
+- [x] **Cases + StageRuns API.** `routers/cases.py`: create (backing draft
+      scan, encrypted report), source attach, stage queue, list, detail, delete,
+      and a resolved-model readback per stage. RBAC via `scope_cases` /
+      `assert_can_*_case`. `test_cases_api.py` + `test_investigations.py`.
+
+**Source acquisition (parts 2 & 3) moved into the first execution stage.** With
+remote fetch dropped (below) and execution deferred, local-path mounting and the
+bundled executor have nothing to *do* until something reads the source — their
+real unknowns are execution-time concerns, so they are folded into **Source
+investigation** rather than built as standalone foundation. The genuine
+constraints to resolve there:
+
+- **Static mounts only.** Docker can't add a bind mount to a running container,
+  so "reference any local path" becomes "pick a subdir under a pre-configured
+  `SOURCE_ROOT` set in `.env` before `docker compose up`"; changing the root
+  needs a restart. Source mounts read-only, with a separate writable scratch.
+- **Executor auth bootstrap.** Agents authenticate with a human-minted key; a
+  compose sibling needs zero-touch auth — a shared secret in `.env` that the
+  server auto-provisions into a "local executor" `Agent` row on startup.
+- **Executor toolchain.** The agent shells out to a CLI on `PATH`; the executor
+  image must ship one (Claude Code needs Node + the CLI + an API key — its
+  subscription login is interactive and won't work headless — or a `generic`
+  local-model CLI).
+- **Server vs executor mount.** Decided with the source stage: a server-side
+  provider call reads files in the server container; an agent session reads them
+  in the executor.
 
 ### Wiring the stages (safest first, after the foundation)
 
 - [ ] **Source investigation** (read-only) — model greps/reads the referenced
       source to understand the vuln; output populates `affected_component` and
-      the technical narrative. Lowest risk, built first.
+      the technical narrative. Lowest risk, built first. **Owns the local-path
+      mount + bundled executor** (see the Foundation note): pick a subdir under
+      `SOURCE_ROOT`, mounted read-only into the executor, which the server
+      auto-provisions and authenticates on startup.
 - [ ] **Remediation** — proposes a fix grounded in the source-investigation
       output; populates `Finding.remediation`.
 - [ ] **Report** — assembles impact + PoC + source + remediation into a
@@ -635,11 +648,19 @@ Per-stage routing spans both.
       default; opt-in auto-execution in a sandboxed executor workspace, network-
       scoped via the `target=` authorisation, recording whether it reproduced.
 
-- [ ] **Wizard step.** Where's your source (host path to mount, or clone-only) +
+- [ ] **Wizard step.** Where's your source (`SOURCE_ROOT` + a subdir) +
       default per-stage models + default execution mode.
 
 ### Future pipeline additions (not in the first build)
 
+- [ ] **Remote source fetch.** Cut from the first build on purpose — for a
+      local-first tool it carries the most risk (SSRF, credential storage) for
+      the least payoff. If it returns: git clone / archive download into the
+      executor's scratch, private-repo credentials stored encrypted (reuse
+      `crypto` + the `app_settings` pattern), and SSRF guardrails — block
+      internal/loopback IPs and cloud-metadata endpoints, host allowlist, no
+      redirects into private ranges. Until then, source is local-path or the
+      existing `ProjectFile` upload.
 - [ ] **Batch import → one Case per vulnerability, under one product.** Import a
       batch of vulnerabilities all associated with the same product and fan them
       out into individual Cases (each its own investigation), created together
