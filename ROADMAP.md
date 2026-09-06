@@ -549,9 +549,15 @@ Not a green field — roughly half the machinery is in place:
 
 ### Design decisions (agreed)
 
-- **A Case is a new object, not an extension of `VulnScan`.** `VulnScan` is a
-  batch-scan *summary*; a Case is a single-bug *investigation* that produces one
-  or more `Finding`s. Kept separate.
+- **A Case is the multi-finding container; a new object, not an extension of
+  `VulnScan`.** Confirmed cardinality: `Case (1) → Finding (many)`, matching the
+  existing `Report → VulnScan → Finding` grain (one report already extracts to
+  many findings). The **pipeline stages run per-Finding** — impact, PoC verify,
+  source investigation, remediation each attach to a Finding with their own
+  model + status — while the **Case** owns the source reference, the shared
+  defaults, and the **Report** stage that assembles every finding's output into
+  one document. A batch import of vulns for one product is therefore one Case
+  with N Findings, the same object as a single uploaded report.
 - **Execution never runs in the server container.** The server holds the AES
   master key and the whole DB; running exploit code there is unacceptable for a
   security tool. Execution runs in a **bundled local executor** — the existing
@@ -565,6 +571,13 @@ Not a green field — roughly half the machinery is in place:
 - **Per-stage model routing with a case-wide default.** Set one model for the
   whole case, or override individual stages (e.g. a permissive local model for
   the PoC stage, a strong hosted model for the report).
+- **One executor, a drained job queue — never a container per finding.** The
+  executor is a single long-lived agent/container that polls a queue of
+  stage-runs and processes them over time, bounded by a small concurrency cap
+  (`remote_max_concurrent`). A 150-finding case is a long queue, spaced out,
+  not 150 containers. Per-run isolation for PoC execution is a per-run scratch
+  dir (and, when execution lands, an optional short-lived sandbox torn down
+  after each run) — isolation per *run*, not a standing instance per finding.
 
 ### The shape
 
@@ -581,11 +594,13 @@ Per-stage routing spans both.
 ### Foundation (build first)
 
 - [ ] **Data model.** `Case` (inbound bug-report text, product/source link,
-      case-default provider+model, status) + `CaseStage` (type, assigned
-      provider+model, status, input context, output, link to the session/call
-      that produced it) + `SourceRef` (how this case's code is obtained).
-      Migrations via the existing `_ensure_*_column` DDL bumps until Alembic
-      lands.
+      case-default provider+model, status) `→ Finding (many)`, and per Finding a
+      `StageRun` (stage type, assigned provider+model, queue status, input
+      context, output, link to the session/provider call that produced it) plus
+      `SourceRef` on the Case (how its code is obtained). Stage-runs are queued
+      and drained by the single executor. `Finding` already carries the output
+      columns; the new tables track the process. Migrations via the existing
+      `_ensure_*_column` DDL bumps until Alembic lands.
 - [ ] **Per-stage model routing.** Extend `ai/scope.py` with a stage layer:
       `CaseStage` → `Case` default → project → team → server default. Reuses
       `get_provider(provider, model)`; invalid/unconfigured pins degrade to the
