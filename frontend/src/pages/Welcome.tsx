@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { Input, Label, Textarea } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import { Empty } from "@/components/ui/Empty";
+import { ConnectAIStep } from "@/components/ConnectAIStep";
 import {
   Sparkles, FolderGit2, Send, Check, ArrowRight, ArrowLeft,
   Server, Copy, Download, FolderUp, FileText,
@@ -23,8 +24,8 @@ type AccessRequest = {
 };
 type Agent = { id: string; hostname: string; api_key?: string; last_seen?: string | null };
 
-const STEPS = ["Welcome", "Request access", "Add data", "Done"] as const;
-type StepIdx = 0 | 1 | 2 | 3;
+const STEPS = ["Welcome", "Connect AI", "Request access", "Add data", "Done"] as const;
+type StepIdx = 0 | 1 | 2 | 3 | 4;
 
 export function Welcome() {
   const { me, refresh } = useAuth();
@@ -57,11 +58,14 @@ export function Welcome() {
 
       <div className="mt-6">
         {step === 0 ? <Step0 onNext={() => setStep(1)} onSkip={skip} /> : null}
-        {step === 1 ? <Step1 onNext={() => setStep(2)} onBack={() => setStep(0)} /> : null}
-        {step === 2 ? <Step2 onNext={() => setStep(3)} onBack={() => setStep(1)} /> : null}
-        {step === 3 ? (
+        {step === 1 ? (
+          <ConnectAIStep onNext={() => setStep(2)} onBack={() => setStep(0)} />
+        ) : null}
+        {step === 2 ? <Step1 onNext={() => setStep(3)} onBack={() => setStep(1)} /> : null}
+        {step === 3 ? <Step2 onNext={() => setStep(4)} onBack={() => setStep(2)} /> : null}
+        {step === 4 ? (
           <Step3
-            onBack={() => setStep(2)}
+            onBack={() => setStep(3)}
             onFinish={() => finish.mutate()}
             finishing={finish.isPending}
           />
