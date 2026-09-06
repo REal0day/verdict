@@ -24,6 +24,13 @@ services:
       - "8000:8000"
     volumes:
       - irs_data:/data
+      # Investigations: your source tree, referenced (not copied) by local-path
+      # cases. Set SOURCE_ROOT in .env to the dir that holds your code, e.g.
+      #   SOURCE_ROOT=~/code
+      # Read-only; the wizard picks a subdir under it. Defaults to an empty
+      # placeholder so the mount always resolves; local-path source is disabled
+      # until you point SOURCE_ROOT at real code (upload works regardless).
+      - ${SOURCE_ROOT:-./.source_root}:/srv/source:ro
     # Lets the server reach a model running on the host (Ollama, LM Studio,
     # vLLM) at host.docker.internal. Docker Desktop provides this name
     # already; on Linux it only exists with this mapping.

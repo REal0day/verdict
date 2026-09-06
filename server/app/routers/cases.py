@@ -16,7 +16,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from .. import crypto, models, schemas
+from .. import crypto, localsource, models, schemas
 from ..ai import scope
 from ..auth import get_current_user
 from ..database import get_db
@@ -98,23 +98,59 @@ def _case_detail(db: Session, case: models.Case) -> schemas.CaseDetail:
     return detail
 
 
-def _apply_source(case: models.Case, body: schemas.CaseSourceIn):
+def _apply_source(db: Session, case: models.Case, body: schemas.CaseSourceIn):
     kind = _enum(body.kind, models.CaseSourceKind, "source kind")
     src = case.source or models.CaseSource(case_id=case.id)
     src.kind = kind
-    src.local_path = (body.local_path or "").strip()
+    src.local_path = (body.local_path or "").strip().lstrip("/")
     src.remote_url = (body.remote_url or "").strip()
     src.ref = (body.ref or "").strip()
     src.credential_id = body.credential_id
-    # Foundation: no fetching yet. A local path is usable as-is; a remote source
-    # is left pending for the (future) fetch step; upload/none are inert.
-    if kind == models.CaseSourceKind.local_path and src.local_path:
-        src.status = models.SourceStatus.ready
+    src.detail = ""
+
+    if kind == models.CaseSourceKind.local_path:
+        # Option 1: a subdir under SOURCE_ROOT, resolved + confined now.
+        try:
+            resolved = localsource.resolve(src.local_path)
+            src.status = models.SourceStatus.ready
+            src.workspace_key = str(resolved)
+        except localsource.SourceError as e:
+            raise HTTPException(400, str(e))
+    elif kind == models.CaseSourceKind.upload:
+        # Option 3 (fallback): the source is the case's project's uploaded
+        # files. Ready once the project actually has some.
+        n = 0
+        if case.project_id:
+            n = db.query(models.ProjectFile).filter(
+                models.ProjectFile.project_id == case.project_id).count()
+        src.status = models.SourceStatus.ready if n else models.SourceStatus.pending
+        src.detail = f"{n} uploaded file(s)" if n else "no files uploaded yet"
     elif kind in (models.CaseSourceKind.remote_git, models.CaseSourceKind.remote_archive):
+        # Remote fetch is a future feature; accept the ref but leave it pending.
         src.status = models.SourceStatus.pending
+        src.detail = "remote fetch is not implemented yet"
     else:
         src.status = models.SourceStatus.none
     case.source = src
+
+
+# ---------------- local source browsing (SOURCE_ROOT picker) ----------------
+
+@router.get("/source/browse")
+def browse_source(
+    path: str = "",
+    _: models.User = Depends(get_current_user),
+):
+    """List subdirectories under SOURCE_ROOT so the wizard can pick a subdir.
+
+    `available: false` means SOURCE_ROOT isn't configured — the UI should offer
+    upload instead. Any signed-in user can browse (it's the operator's own
+    mounted tree).
+    """
+    try:
+        return localsource.browse(path)
+    except localsource.SourceError as e:
+        raise HTTPException(400, str(e))
 
 
 # ---------------- case CRUD ----------------
@@ -156,7 +192,7 @@ def create_case(
     db.add(case)
     db.flush()
     if body.source:
-        _apply_source(case, body.source)
+        _apply_source(db, case, body.source)
     db.commit()
     db.refresh(case)
     return _case_detail(db, case)
@@ -253,7 +289,7 @@ def set_source(
     if not case:
         raise HTTPException(404, "case not found")
     assert_can_edit_case(db, viewer, case)
-    _apply_source(case, body)
+    _apply_source(db, case, body)
     db.commit()
     db.refresh(case)
     return _case_detail(db, case)

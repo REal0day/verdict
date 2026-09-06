@@ -97,11 +97,13 @@ def test_findings_flow_through_the_backing_scan(client):
     assert {f["title"] for f in detail["findings"]} == {"A", "B", "C"}
 
 
-def test_local_source_is_ready_remote_is_pending(client):
+def test_local_source_needs_a_root_remote_is_pending(client):
     case = _mk_case(client)
+    # No SOURCE_ROOT configured here -> local_path is rejected with a 400
+    # (validation lives in test_local_source.py). Remote is accepted-but-pending.
     r = client.put(f"/cases/{case['id']}/source", headers=client.owner,
-                   json={"kind": "local_path", "local_path": "/code/widgetx"})
-    assert r.json()["source"]["status"] == "ready"
+                   json={"kind": "local_path", "local_path": "widgetx"})
+    assert r.status_code == 400 and "source root" in r.text.lower()
     r = client.put(f"/cases/{case['id']}/source", headers=client.owner,
                    json={"kind": "remote_git", "remote_url": "https://x/y.git", "ref": "main"})
     src = r.json()["source"]

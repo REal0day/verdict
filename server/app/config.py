@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     session_upload_max_total_bytes: int = 5 * 1024 * 1024 * 1024  # 5 GiB
     session_upload_max_files: int = 20000
 
+    # Investigations: a read-only mount of the operator's SOURCE_ROOT. The
+    # wizard picks a subdir under this to reference local code without copying.
+    # Docker can't add a bind mount at runtime, so SOURCE_ROOT is set in .env
+    # before `docker compose up`; this is where it lands inside the container.
+    # Empty-string disables local-path source (fall back to upload).
+    source_mount: str = "/srv/source"
+
     # folder-import staging dir (one subdir per FolderImport, cleaned on confirm/cancel)
     imports_staging_dir: str = "/data/imports"
     # hard cap per upload to stop accidental DoS via huge dir picks.

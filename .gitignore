@@ -25,3 +25,7 @@ frontend/dist/
 # Holds env.secret (live IRS_ENCRYPTION_KEY + provider API keys), a full
 # Postgres dump, and the encrypted blob volume. See export/RESTORE.md.
 export/
+
+# Investigations: placeholder mount target. Keep the dir, ignore its contents.
+.source_root/*
+!.source_root/.keep
