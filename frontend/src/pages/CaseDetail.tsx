@@ -461,20 +461,26 @@ function StageRow({ caseId, run, onChange }: {
         </button>
       </div>
       {openOut ? (
-        <div className="px-3 pb-3">
+        <div className="px-3 pb-3 space-y-2">
           {run.error ? (
             <div className="text-xs text-danger bg-danger/10 border border-danger/30 rounded px-2 py-1.5">
               {run.error}
             </div>
-          ) : output.isLoading ? (
+          ) : null}
+          {output.isLoading ? (
             <div className="text-xs text-fgmuted">Loading…</div>
           ) : output.data?.output ? (
-            <pre className="text-xs whitespace-pre-wrap bg-muted/40 border border-border rounded p-3 max-h-96 overflow-y-auto">
-              {output.data.output}
-            </pre>
-          ) : (
+            <div>
+              {run.error ? (
+                <p className="text-[11px] text-fgmuted mb-1">What the model actually returned:</p>
+              ) : null}
+              <pre className="text-xs whitespace-pre-wrap bg-muted/40 border border-border rounded p-3 max-h-96 overflow-y-auto">
+                {output.data.output}
+              </pre>
+            </div>
+          ) : !run.error ? (
             <div className="text-xs text-fgmuted">No output yet.</div>
-          )}
+          ) : null}
         </div>
       ) : null}
     </div>

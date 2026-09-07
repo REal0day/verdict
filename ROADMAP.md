@@ -631,6 +631,14 @@ constraints to resolve there:
 
 ### Wiring the stages (safest first, after the foundation)
 
+- [x] **Stages run in JSON mode, not tool-calling** — *landed.* Local models are
+      unreliable at OpenAI-style function-calling, so every stage now inlines a
+      size-bounded source digest into the prompt and asks for a JSON response
+      (parsed leniently: fences and surrounding prose tolerated). This removes
+      the dependency on a model/endpoint supporting tools. On a parse failure
+      the stage stores the model's raw response (viewable in the UI) and logs
+      it, so an error is never a dead end.
+
 - [x] **Discover** (case-level, source scan → findings table) — *landed.* The
       primary entry point: attach source, click **Discover vulns**, and the
       model reads the report (as notes) + scans the whole source tree and

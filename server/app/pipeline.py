@@ -1,11 +1,13 @@
 """Stage execution for the Investigations pipeline.
 
-The first executable stage is **source investigation**, and it is read-only:
-a model is given `list_dir` / `read_file` / `search_code` tools confined to the
-case's source tree and loops until it submits an analysis. Because it only
-*reads* files (never runs code), it runs as a server-side provider tool-use
-loop — no executor, no sandbox. PoC execution (running code) is a later,
-carefully-sandboxed stage.
+Stages run as **plain chat calls that return JSON** — not tool/function calling.
+Local models (via Ollama, LM Studio, etc.) are far more reliable at "respond
+with JSON" than at OpenAI-style tool-calling, and this sidesteps the question
+of whether a given model/endpoint supports tools at all. The source tree is
+inlined into the prompt as a size-bounded digest, so no read tools are needed.
+
+Every model response is logged and, on a parse failure, stored on the run so
+you can see exactly what the model said instead of a dead-end error.
 
 Runs are drained by a single in-process thread pool (`pipeline_max_concurrent`)
 — the single-executor, one-long-queue model. Scale by moving this to a
@@ -13,11 +15,11 @@ Celery/RQ worker pool; the `run_stage` boundary already isolates it.
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
 import logging
 import os
-import subprocess
-import datetime as dt
+import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -25,7 +27,6 @@ from . import crypto, cvss, models
 from .ai import scope
 from .ai.base import get_provider
 from .ai.errors import AIProviderError
-from .ai.tools import ToolResult, ToolSpec
 from .config import settings
 
 log = logging.getLogger("irs.pipeline")
@@ -34,6 +35,18 @@ _pool = ThreadPoolExecutor(
     max_workers=max(1, settings.pipeline_max_concurrent),
     thread_name_prefix="stage",
 )
+
+
+class StageModelError(RuntimeError):
+    """The model answered, but we couldn't get usable structured output from it.
+
+    Carries the model's raw response so it can be logged and shown for review.
+    """
+
+    def __init__(self, reason: str, raw: str = ""):
+        self.reason = reason
+        self.raw = raw or ""
+        super().__init__(reason)
 
 
 def submit(run_id: str) -> None:
@@ -59,7 +72,6 @@ def _run_guarded(run_id: str) -> None:
 # ---------------------------------------------------------------- confinement
 
 def _confine(base: Path, rel: str) -> Path:
-    """Resolve `rel` under `base`, refusing any escape. Raises ValueError."""
     base_r = base.resolve()
     target = (base_r / (rel or "").lstrip("/")).resolve()
     if target != base_r and base_r not in target.parents:
@@ -67,246 +79,142 @@ def _confine(base: Path, rel: str) -> Path:
     return target
 
 
-# ------------------------------------------------------------- source tools
-
-def _source_root(db, case: models.Case) -> Path:
+def _source_root(db, case: models.Case) -> Path | None:
+    """Resolved source dir, or None if the case has no usable local source."""
     src = case.source
-    if not src or src.kind != models.CaseSourceKind.local_path:
-        raise RuntimeError("source investigation needs a local-path source")
-    if not src.workspace_key:
-        raise RuntimeError("source is not resolved (attach a local path first)")
+    if not src or src.kind != models.CaseSourceKind.local_path or not src.workspace_key:
+        return None
     root = Path(src.workspace_key)
-    if not root.is_dir():
-        raise RuntimeError(f"source path is not available: {root}")
-    return root
+    return root if root.is_dir() else None
 
 
-_SOURCE_TOOLS = [
-    ToolSpec(
-        name="list_dir",
-        description="List entries (files and subdirectories) of a directory in the source tree. Use '' for the root.",
-        parameters={
-            "type": "object",
-            "properties": {"path": {"type": "string", "description": "Directory path relative to the source root."}},
-            "required": ["path"],
-        },
-    ),
-    ToolSpec(
-        name="read_file",
-        description="Read a UTF-8 text file from the source tree (first ~256KB). Returns the content with line numbers.",
-        parameters={
-            "type": "object",
-            "properties": {"path": {"type": "string", "description": "File path relative to the source root."}},
-            "required": ["path"],
-        },
-    ),
-    ToolSpec(
-        name="search_code",
-        description="Search the source tree for a fixed string or regex and return matching file:line locations.",
-        parameters={
-            "type": "object",
-            "properties": {
-                "pattern": {"type": "string", "description": "Text or regular expression to search for."},
-            },
-            "required": ["pattern"],
-        },
-    ),
-    ToolSpec(
-        name="submit_analysis",
-        description="Submit the finished analysis of how this finding manifests in the source. Call exactly once when done.",
-        parameters={
-            "type": "object",
-            "properties": {
-                "affected_component": {"type": "string", "description": "The file/module/component where the vuln lives (e.g. 'api/upload.py')."},
-                "summary": {"type": "string", "description": "Markdown: what the code does, why it's vulnerable, and the exact locations. Cite file:line."},
-                "key_locations": {"type": "array", "items": {"type": "string"}, "description": "file:line references central to the finding."},
-                "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
-            },
-            "required": ["summary"],
-        },
-    ),
-]
+# ------------------------------------------------------------- source digest
+
+# Directories that are never worth inlining.
+_SKIP_DIRS = {
+    "node_modules", ".git", "dist", "build", "vendor", "__pycache__",
+    ".venv", "venv", ".tox", "coverage", ".mypy_cache", ".pytest_cache",
+}
+# Extensions we treat as code (inlined first / preferred).
+_CODE_EXT = {
+    ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".go", ".rb", ".php",
+    ".java", ".c", ".h", ".cc", ".cpp", ".cs", ".rs", ".sh", ".pl", ".lua",
+    ".ejs", ".html", ".sql", ".yaml", ".yml", ".json", ".toml", ".cfg", ".ini",
+}
+_MAX_FILE_INLINE = 40 * 1024   # per file
 
 
-def _tool_list_dir(root: Path, args: dict) -> str:
-    target = _confine(root, args.get("path", ""))
-    if not target.is_dir():
-        return f"not a directory: {args.get('path')!r}"
-    out = []
-    for e in sorted(os.scandir(target), key=lambda e: (not e.is_dir(), e.name.lower())):
-        if e.name.startswith("."):
-            continue
-        out.append(f"{e.name}/" if e.is_dir(follow_symlinks=False) else e.name)
-    return "\n".join(out) if out else "(empty)"
-
-
-def _tool_read_file(root: Path, args: dict) -> str:
-    target = _confine(root, args.get("path", ""))
-    if not target.is_file():
-        return f"not a file: {args.get('path')!r}"
-    data = target.read_bytes()[: settings.pipeline_max_file_bytes]
-    try:
-        text = data.decode("utf-8")
-    except UnicodeDecodeError:
-        return f"(binary file, {target.stat().st_size} bytes — not shown)"
-    lines = text.splitlines()
-    numbered = "\n".join(f"{i:>5}  {ln}" for i, ln in enumerate(lines, 1))
-    if target.stat().st_size > len(data):
-        numbered += "\n… (truncated)"
-    return numbered
-
-
-def _tool_search_code(root: Path, args: dict) -> str:
-    pattern = (args.get("pattern") or "").strip()
-    if not pattern:
-        return "empty pattern"
-    # ripgrep if present (fast, respects .gitignore); else a bounded Python walk.
-    try:
-        r = subprocess.run(
-            ["rg", "--no-heading", "--line-number", "--color", "never", "-e", pattern, "."],
-            cwd=str(root), capture_output=True, text=True, timeout=20,
-        )
-        if r.returncode in (0, 1):
-            hits = r.stdout.splitlines()[:200]
-            return "\n".join(hits) if hits else "no matches"
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    return _py_search(root, pattern)
-
-
-def _py_search(root: Path, pattern: str) -> str:
-    import re
-    try:
-        rx = re.compile(pattern)
-    except re.error:
-        rx = re.compile(re.escape(pattern))
-    hits, scanned = [], 0
+def _iter_source_files(root: Path):
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS and not d.startswith(".")]
         for fn in filenames:
-            if scanned > 5000 or len(hits) >= 200:
-                break
-            fp = Path(dirpath) / fn
-            scanned += 1
-            try:
-                for i, line in enumerate(fp.read_text("utf-8", "ignore").splitlines(), 1):
-                    if rx.search(line):
-                        rel = fp.relative_to(root)
-                        hits.append(f"{rel}:{i}:{line.strip()[:200]}")
-                        if len(hits) >= 200:
-                            break
-            except (OSError, UnicodeDecodeError):
+            if fn.startswith("."):
                 continue
-    return "\n".join(hits) if hits else "no matches"
+            yield Path(dirpath) / fn
 
 
-_SOURCE_SYSTEM = (
-    "You are a senior application-security engineer investigating a reported "
-    "vulnerability against the product's source code. You have read-only tools "
-    "to list directories, read files, and search the tree. Work from the "
-    "reported finding: locate the vulnerable code, understand how it manifests, "
-    "and identify the exact file/component and line locations. Do not speculate "
-    "beyond what the code shows. When you are confident, call submit_analysis "
-    "exactly once. Be concise and cite file:line."
+def _source_digest(root: Path, budget: int, focus: str = "") -> str:
+    """Inline the source tree into a size-bounded string for the prompt.
+
+    Code files first; a file matching `focus` (an affected component) is put at
+    the very front. Notes truncation so the model knows the view is partial.
+    """
+    files = list(_iter_source_files(root))
+
+    def rank(p: Path) -> tuple:
+        rel = str(p.relative_to(root))
+        is_focus = bool(focus) and focus in rel
+        is_code = p.suffix.lower() in _CODE_EXT
+        return (not is_focus, not is_code, len(rel))
+
+    files.sort(key=rank)
+
+    tree = "\n".join(sorted(str(p.relative_to(root)) for p in files)[:400])
+    parts = [f"## Source tree ({len(files)} files under the source root)", tree, ""]
+    used = len(tree)
+    truncated_files = 0
+    for p in files:
+        if used >= budget:
+            truncated_files += 1
+            continue
+        rel = str(p.relative_to(root))
+        try:
+            data = p.read_bytes()[:_MAX_FILE_INLINE]
+            text = data.decode("utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        chunk = f"\n### {rel}\n```\n{text}\n```\n"
+        if used + len(chunk) > budget:
+            truncated_files += 1
+            continue
+        parts.append(chunk)
+        used += len(chunk)
+    if truncated_files:
+        parts.append(f"\n_(+{truncated_files} more files not shown — digest truncated at {budget} chars.)_")
+    return "\n".join(parts)
+
+
+# ---------------------------------------------------------------- json asking
+
+def _extract_json(text: str):
+    """Pull a JSON value out of a model response. Returns the object or None."""
+    t = (text or "").strip()
+    m = re.search(r"```(?:json)?\s*(.*?)```", t, re.S)
+    if m:
+        t = m.group(1).strip()
+    try:
+        return json.loads(t)
+    except (json.JSONDecodeError, ValueError):
+        pass
+    for open_c, close_c in (("{", "}"), ("[", "]")):
+        i, j = t.find(open_c), t.rfind(close_c)
+        if 0 <= i < j:
+            try:
+                return json.loads(t[i:j + 1])
+            except (json.JSONDecodeError, ValueError):
+                continue
+    return None
+
+
+def _ask_json(provider, system: str, user: str, max_tokens: int = 8192):
+    """Chat, log the raw response, and extract JSON. Returns (parsed_or_None, raw)."""
+    raw = provider.chat(system, [{"role": "user", "content": user}], max_tokens=max_tokens) or ""
+    log.info(
+        "stage model response via %s (%d chars): %s%s",
+        getattr(provider, "display_name", getattr(provider, "name", "?")),
+        len(raw), raw[:2000], "…(truncated in log)" if len(raw) > 2000 else "",
+    )
+    return _extract_json(raw), raw
+
+
+_JSON_RULES = (
+    "\n\nRespond with ONLY a single JSON value and nothing else — no prose "
+    "before or after, no markdown fences. If you have nothing to report, return "
+    "the empty shape (e.g. an empty array)."
 )
 
 
-def _run_source_stage(db, run: models.StageRun) -> str:
-    """Read-only source-investigation loop. Returns the analysis markdown."""
-    case = db.get(models.Case, run.case_id)
-    finding = db.get(models.Finding, run.finding_id) if run.finding_id else None
-    if finding is None:
-        raise RuntimeError("source investigation needs a finding")
-    root = _source_root(db, case)
-
-    choice = scope.for_stage(db, run.id)
-    provider = get_provider(choice.provider, choice.model)
-
-    report = crypto.decrypt(case.report_enc).decode("utf-8", "replace") if case.report_enc else ""
-    user = (
-        f"# Reported finding\n\nTitle: {finding.title or '(none)'}\n"
-        f"Severity: {finding.severity.value}\n"
-        f"CWE: {finding.cwe or '(none)'}\n"
-        f"Reporter description:\n{finding.description or '(none)'}\n\n"
-        f"# Inbound bug report\n\n{report or '(none)'}\n\n"
-        "Investigate this against the source tree and submit your analysis."
-    )
-
-    convo = provider.start_tools(_SOURCE_SYSTEM, _SOURCE_TOOLS, max_tokens=8192)
-    turn = convo.send_user(user)
-
-    handlers = {
-        "list_dir": _tool_list_dir,
-        "read_file": _tool_read_file,
-        "search_code": _tool_search_code,
-    }
-    analysis: dict | None = None
-
-    for _ in range(settings.pipeline_max_iterations):
-        if not turn.wants_tools:
-            break
-        results = []
-        for call in turn.tool_calls:
-            if call.name == "submit_analysis":
-                analysis = call.arguments
-                results.append(ToolResult(call_id=call.id, content="analysis recorded"))
-            elif call.name in handlers:
-                try:
-                    content = handlers[call.name](root, call.arguments)
-                except ValueError as e:  # confinement / bad path
-                    content = f"error: {e}"
-                results.append(ToolResult(call_id=call.id, content=content))
-            else:
-                results.append(ToolResult(call_id=call.id, content=f"unknown tool {call.name!r}", is_error=True))
-        if analysis is not None:
-            break
-        turn = convo.send_tool_results(results)
-
-    if analysis is None:
-        # Model stopped without submitting; keep whatever prose it produced.
-        text = (turn.text or "").strip()
-        if not text:
-            raise RuntimeError("the model finished without submitting an analysis")
-        analysis = {"summary": text}
-
-    # Persist: non-destructive Finding update + the full analysis as output.
-    ac = (analysis.get("affected_component") or "").strip()
-    if ac and not finding.affected_component:
-        finding.affected_component = ac[:512]
-
-    parts = [f"# Source investigation — {finding.title or 'finding'}", ""]
-    if ac:
-        parts.append(f"**Affected component:** {ac}")
-    if analysis.get("confidence"):
-        parts.append(f"**Confidence:** {analysis['confidence']}")
-    parts += ["", analysis.get("summary", "").strip()]
-    locs = analysis.get("key_locations") or []
-    if locs:
-        parts += ["", "**Key locations:**", *[f"- `{l}`" for l in locs]]
-    return "\n".join(parts).strip()
-
-
-# ----------------------------------------------------------- shared helpers
+# ---------------------------------------------------------------- shared ctx
 
 def _provider(db, run):
-    # Uses the module-level get_provider (imported at top) so tests can
-    # monkeypatch pipeline.get_provider.
     choice = scope.for_stage(db, run.id)
     return get_provider(choice.provider, choice.model)
 
 
+def _report_text(case) -> str:
+    return crypto.decrypt(case.report_enc).decode("utf-8", "replace") if case.report_enc else ""
+
+
 def _finding_ctx(case, finding) -> str:
-    report = crypto.decrypt(case.report_enc).decode("utf-8", "replace") if case.report_enc else ""
     return (
         f"# Reported finding\n\nTitle: {finding.title or '(none)'}\n"
         f"Severity: {finding.severity.value}\nCWE: {finding.cwe or '(none)'}\n"
         f"Description:\n{finding.description or '(none)'}\n\n"
-        f"# Inbound bug report\n\n{report or '(none)'}\n"
+        f"# Inbound bug report\n\n{_report_text(case) or '(none)'}\n"
     )
 
 
 def _prior(db, run, stage) -> str:
-    """Latest done output of `stage` for this run's finding, decrypted."""
     q = (db.query(models.StageRun)
            .filter(models.StageRun.case_id == run.case_id,
                    models.StageRun.stage == stage,
@@ -320,90 +228,149 @@ def _prior(db, run, stage) -> str:
     return ""
 
 
-def _run_read_tool_loop(db, run, provider, system, extra_tools, user, terminal_name):
-    """Tool-use loop with the read-only source tools plus a terminal tool.
-
-    Returns (terminal_args | None, last_text). The source root is optional:
-    when there's no local source, only the terminal tool is offered.
-    """
+def _digest_for(db, run, budget: int, focus: str = "") -> str:
     case = db.get(models.Case, run.case_id)
-    try:
-        root = _source_root(db, case)
-    except RuntimeError:
-        root = None
-    tools = ([] if root is None else list(_SOURCE_TOOLS[:3])) + extra_tools
-    handlers = {"list_dir": _tool_list_dir, "read_file": _tool_read_file, "search_code": _tool_search_code}
+    root = _source_root(db, case)
+    if root is None:
+        return "(no source attached)"
+    return _source_digest(root, budget, focus)
 
-    convo = provider.start_tools(system, tools, max_tokens=8192)
-    turn = convo.send_user(user)
-    final = None
-    for _ in range(settings.pipeline_max_iterations):
-        if not turn.wants_tools:
-            break
-        results = []
-        for call in turn.tool_calls:
-            if call.name == terminal_name:
-                final = call.arguments
-                results.append(ToolResult(call_id=call.id, content="recorded"))
-            elif call.name in handlers and root is not None:
-                try:
-                    content = handlers[call.name](root, call.arguments)
-                except ValueError as e:
-                    content = f"error: {e}"
-                results.append(ToolResult(call_id=call.id, content=content))
-            else:
-                results.append(ToolResult(call_id=call.id, content=f"unknown tool {call.name!r}", is_error=True))
-        if final is not None:
-            break
-        turn = convo.send_tool_results(results)
-    return final, (turn.text or "").strip()
+
+# --------------------------------------------------------------- discover stage
+
+_DISCOVER_SYSTEM = (
+    "You are a senior application-security engineer triaging a case. You are "
+    "given an inbound bug report (which may describe issues, or may just be "
+    "context) and a digest of the product's source code. Identify the real, "
+    "concrete vulnerabilities — every issue the report describes AND any you "
+    "find by reading the source. Ground each in the code; do not invent issues "
+    "the code does not support.\n\n"
+    'Return a JSON object of this shape:\n'
+    '{"findings": [{"title": "...", "severity": "critical|high|medium|low|info", '
+    '"cwe": "CWE-000", "affected_component": "path/file", '
+    '"description": "what it is and why it is exploitable, citing file:line"}]}'
+    + _JSON_RULES
+)
+
+_MAX_DISCOVERED = 50
+
+
+def _run_discover_stage(db, run) -> str:
+    case = db.get(models.Case, run.case_id)
+    if case.scan_id is None:
+        raise RuntimeError("case has no scan to attach findings to")
+    provider = _provider(db, run)
+
+    user = (
+        f"# Inbound bug report / notes\n\n{_report_text(case) or '(none provided)'}\n\n"
+        f"{_digest_for(db, run, budget=140_000)}\n\n"
+        "Identify the vulnerabilities and return the JSON object."
+    )
+    parsed, raw = _ask_json(provider, _DISCOVER_SYSTEM, user, max_tokens=8192)
+    if parsed is None:
+        raise StageModelError("The model did not return valid JSON.", raw)
+
+    items = parsed.get("findings") if isinstance(parsed, dict) else parsed
+    if not isinstance(items, list):
+        raise StageModelError("The model's JSON had no 'findings' list.", raw)
+
+    created, rows = 0, []
+    for it in items[:_MAX_DISCOVERED]:
+        if not isinstance(it, dict):
+            continue
+        title = (it.get("title") or "").strip()
+        if not title:
+            continue
+        try:
+            sev = models.Severity((it.get("severity") or "unknown").strip().lower())
+        except ValueError:
+            sev = models.Severity.unknown
+        db.add(models.Finding(
+            scan_id=case.scan_id, user_id=case.user_id, title=title[:512], severity=sev,
+            cwe=(it.get("cwe") or "").strip()[:64],
+            affected_component=(it.get("affected_component") or "").strip()[:512],
+            description=(it.get("description") or "").strip(),
+        ))
+        created += 1
+        rows.append((title, sev.value, it.get("cwe") or "-", it.get("affected_component") or "-"))
+
+    parts = [f"# Discovery — {created} finding(s)", ""]
+    if created:
+        parts += ["| # | Title | Severity | CWE | Component |", "|---|---|---|---|---|"]
+        for i, (t, sv, cwe, comp) in enumerate(rows, 1):
+            parts.append(f"| {i} | {t} | {sv} | {cwe} | {comp} |")
+    else:
+        parts.append("No vulnerabilities identified from the report and source.")
+    return "\n".join(parts).strip()
+
+
+# ------------------------------------------------------------- source stage
+
+_SOURCE_SYSTEM = (
+    "You are a senior application-security engineer investigating one reported "
+    "vulnerability against the product's source. Locate the vulnerable code, "
+    "explain how it manifests, and identify the exact file/component and lines.\n\n"
+    'Return JSON: {"affected_component": "path/file", '
+    '"summary": "markdown: what the code does, why it is vulnerable, citing file:line", '
+    '"key_locations": ["file:line", ...], "confidence": "low|medium|high"}'
+    + _JSON_RULES
+)
+
+
+def _run_source_stage(db, run) -> str:
+    case = db.get(models.Case, run.case_id)
+    finding = db.get(models.Finding, run.finding_id) if run.finding_id else None
+    if finding is None:
+        raise RuntimeError("source investigation needs a finding")
+    provider = _provider(db, run)
+
+    user = (
+        _finding_ctx(case, finding)
+        + f"\n{_digest_for(db, run, budget=140_000, focus=finding.affected_component)}\n\n"
+        "Investigate this finding and return the JSON object."
+    )
+    parsed, raw = _ask_json(provider, _SOURCE_SYSTEM, user)
+    if not isinstance(parsed, dict):
+        raise StageModelError("The model did not return a JSON object.", raw)
+
+    ac = (parsed.get("affected_component") or "").strip()
+    if ac and not finding.affected_component:
+        finding.affected_component = ac[:512]
+
+    parts = [f"# Source investigation — {finding.title or 'finding'}", ""]
+    if ac:
+        parts.append(f"**Affected component:** {ac}")
+    if parsed.get("confidence"):
+        parts.append(f"**Confidence:** {parsed['confidence']}")
+    parts += ["", (parsed.get("summary") or "").strip()]
+    locs = parsed.get("key_locations") or []
+    if locs:
+        parts += ["", "**Key locations:**", *[f"- `{l}`" for l in locs]]
+    return "\n".join(parts).strip()
 
 
 # ------------------------------------------------------------- impact stage
 
 _IMPACT_SYSTEM = (
-    "You are a senior application-security engineer scoring the impact of a "
-    "confirmed vulnerability. Use the read-only source tools if they help you "
-    "judge attack vector, privileges, or scope. Then call submit_impact ONCE "
-    "with: a CVSS 3.1 base vector, a CVSS 4.0 base vector, a CWE id, and — for "
-    "each metric in each vector — one short sentence of justification. Keep "
-    "each rationale to a single sentence. Do not inflate severity."
-)
-
-_IMPACT_TOOL = ToolSpec(
-    name="submit_impact",
-    description="Submit the CVSS assessment. Call exactly once.",
-    parameters={
-        "type": "object",
-        "properties": {
-            "cvss31_vector": {"type": "string", "description": "Full CVSS:3.1/... base vector."},
-            "cvss40_vector": {"type": "string", "description": "Full CVSS:4.0/... base vector."},
-            "cvss40_score": {"type": "number", "description": "Your CVSS 4.0 base score estimate (0-10)."},
-            "cwe": {"type": "string", "description": "Primary CWE, e.g. 'CWE-434'."},
-            "cvss31_rationale": {
-                "type": "array", "description": "One entry per 3.1 metric.",
-                "items": {"type": "object", "properties": {
-                    "metric": {"type": "string"}, "value": {"type": "string"},
-                    "reason": {"type": "string", "description": "one sentence"}}},
-            },
-            "cvss40_rationale": {
-                "type": "array", "description": "One entry per 4.0 metric.",
-                "items": {"type": "object", "properties": {
-                    "metric": {"type": "string"}, "value": {"type": "string"},
-                    "reason": {"type": "string", "description": "one sentence"}}},
-            },
-            "summary": {"type": "string", "description": "One-paragraph impact narrative."},
-        },
-        "required": ["cvss31_vector", "cwe"],
-    },
+    "You are a senior application-security engineer scoring a confirmed "
+    "vulnerability. Provide a CVSS 3.1 base vector, a CVSS 4.0 base vector, a "
+    "CWE, and one short sentence of justification for each metric in each "
+    "vector. Do not inflate severity.\n\n"
+    'Return JSON: {"cvss31_vector": "CVSS:3.1/AV:.../...", '
+    '"cvss40_vector": "CVSS:4.0/AV:.../...", "cvss40_score": 0.0, "cwe": "CWE-000", '
+    '"cvss31_rationale": [{"metric": "AV", "value": "N", "reason": "one sentence"}], '
+    '"cvss40_rationale": [{"metric": "AV", "value": "N", "reason": "one sentence"}], '
+    '"summary": "one-paragraph impact narrative"}'
+    + _JSON_RULES
 )
 
 
 def _fmt_rationale(rows) -> str:
     out = []
     for r in rows or []:
-        m = r.get("metric", "?"); v = r.get("value", "?"); why = (r.get("reason") or "").strip()
-        out.append(f"- **{m}:{v}** — {why}")
+        if not isinstance(r, dict):
+            continue
+        out.append(f"- **{r.get('metric','?')}:{r.get('value','?')}** — {(r.get('reason') or '').strip()}")
     return "\n".join(out)
 
 
@@ -418,15 +385,17 @@ def _run_impact_stage(db, run) -> str:
     user = _finding_ctx(case, finding)
     if prior:
         user += f"\n# Prior source investigation\n\n{prior}\n"
-    user += "\nScore this finding and call submit_impact."
+    else:
+        user += f"\n{_digest_for(db, run, budget=100_000, focus=finding.affected_component)}\n"
+    user += "\nScore this finding and return the JSON object."
 
-    args, text = _run_read_tool_loop(db, run, provider, _IMPACT_SYSTEM, [_IMPACT_TOOL], user, "submit_impact")
-    if args is None:
-        raise RuntimeError("the model finished without submitting an impact assessment")
+    parsed, raw = _ask_json(provider, _IMPACT_SYSTEM, user, max_tokens=4096)
+    if not isinstance(parsed, dict):
+        raise StageModelError("The model did not return a JSON object.", raw)
 
-    # CVSS 3.1: authoritative server-side score from the vector.
-    v31 = (args.get("cvss31_vector") or "").strip()
+    v31 = (parsed.get("cvss31_vector") or "").strip()
     score31 = sev31 = None
+    v31_err = ""
     try:
         score31, sev31, _ = cvss.cvss31_base(v31)
         finding.cvss31_vector = v31[:128]
@@ -434,22 +403,19 @@ def _run_impact_stage(db, run) -> str:
         finding.severity = models.Severity(sev31 if sev31 != "none" else "info")
     except cvss.CVSSError as e:
         v31_err = str(e)
-    else:
-        v31_err = ""
 
-    # CVSS 4.0: validate shape, keep the model's estimate (labelled).
-    v40 = (args.get("cvss40_vector") or "").strip()
+    v40 = (parsed.get("cvss40_vector") or "").strip()
     v40_ok = False
     if v40:
         try:
             cvss.validate_cvss40(v40)
             v40_ok = True
             finding.cvss40_vector = v40[:160]
-            finding.cvss40_score = args.get("cvss40_score")
+            finding.cvss40_score = parsed.get("cvss40_score")
         except cvss.CVSSError:
             v40_ok = False
 
-    cwe = (args.get("cwe") or "").strip()
+    cwe = (parsed.get("cwe") or "").strip()
     if cwe and not finding.cwe:
         finding.cwe = cwe[:64]
 
@@ -459,16 +425,16 @@ def _run_impact_stage(db, run) -> str:
     elif v31:
         parts.append(f"**CVSS 3.1:** `{v31}` — could not compute ({v31_err})")
     if v40:
-        label = "model-estimated" if v40_ok else "unvalidated"
-        parts.append(f"**CVSS 4.0:** {args.get('cvss40_score', '?')} ({label}) — `{v40}`")
+        parts.append(f"**CVSS 4.0:** {parsed.get('cvss40_score', '?')} "
+                     f"({'model-estimated' if v40_ok else 'unvalidated'}) — `{v40}`")
     if cwe:
         parts.append(f"**CWE:** {cwe}")
-    if args.get("summary"):
-        parts += ["", args["summary"].strip()]
-    r31 = _fmt_rationale(args.get("cvss31_rationale"))
+    if parsed.get("summary"):
+        parts += ["", parsed["summary"].strip()]
+    r31 = _fmt_rationale(parsed.get("cvss31_rationale"))
     if r31:
         parts += ["", "**CVSS 3.1 rationale:**", r31]
-    r40 = _fmt_rationale(args.get("cvss40_rationale"))
+    r40 = _fmt_rationale(parsed.get("cvss40_rationale"))
     if r40:
         parts += ["", "**CVSS 4.0 rationale:**", r40]
     return "\n".join(parts).strip()
@@ -478,25 +444,12 @@ def _run_impact_stage(db, run) -> str:
 
 _REMEDIATION_SYSTEM = (
     "You are a senior application-security engineer proposing a remediation for "
-    "a confirmed vulnerability. Read the source with the read-only tools to "
-    "ground your fix in the real code. Then call submit_remediation ONCE with a "
-    "concrete, minimal fix: what to change and where (cite file:line), why it "
-    "closes the issue, and any residual risk. Prefer a specific patch over "
-    "generic advice."
-)
-
-_REMEDIATION_TOOL = ToolSpec(
-    name="submit_remediation",
-    description="Submit the remediation. Call exactly once.",
-    parameters={
-        "type": "object",
-        "properties": {
-            "summary": {"type": "string", "description": "Markdown: the concrete fix, citing file:line."},
-            "patch": {"type": "string", "description": "Optional unified-diff or code snippet."},
-            "references": {"type": "array", "items": {"type": "string"}},
-        },
-        "required": ["summary"],
-    },
+    "a confirmed vulnerability. Give a concrete, minimal fix: what to change and "
+    "where (cite file:line), why it closes the issue, and any residual risk. "
+    "Prefer a specific patch over generic advice.\n\n"
+    'Return JSON: {"summary": "markdown: the concrete fix, citing file:line", '
+    '"patch": "optional unified-diff or code snippet", "references": ["url", ...]}'
+    + _JSON_RULES
 )
 
 
@@ -507,29 +460,103 @@ def _run_remediation_stage(db, run) -> str:
         raise RuntimeError("remediation needs a finding")
     provider = _provider(db, run)
 
-    user = _finding_ctx(case, finding)
     prior = _prior(db, run, models.StageType.source)
+    user = _finding_ctx(case, finding)
     if prior:
         user += f"\n# Prior source investigation\n\n{prior}\n"
-    user += "\nPropose the fix and call submit_remediation."
+    else:
+        user += f"\n{_digest_for(db, run, budget=100_000, focus=finding.affected_component)}\n"
+    user += "\nPropose the fix and return the JSON object."
 
-    args, text = _run_read_tool_loop(db, run, provider, _REMEDIATION_SYSTEM,
-                                     [_REMEDIATION_TOOL], user, "submit_remediation")
-    if args is None:
-        if not text:
-            raise RuntimeError("the model finished without submitting a remediation")
-        args = {"summary": text}
+    parsed, raw = _ask_json(provider, _REMEDIATION_SYSTEM, user)
+    if not isinstance(parsed, dict):
+        raise StageModelError("The model did not return a JSON object.", raw)
 
-    summary = (args.get("summary") or "").strip()
-    if summary and not finding.remediation:
+    summary = (parsed.get("summary") or "").strip()
+    if not summary:
+        raise StageModelError("The model returned no remediation summary.", raw)
+    if not finding.remediation:
         finding.remediation = summary[:8000]
 
     parts = [f"# Remediation — {finding.title or 'finding'}", "", summary]
-    if args.get("patch"):
-        parts += ["", "```", args["patch"].strip(), "```"]
-    refs = args.get("references") or []
+    if parsed.get("patch"):
+        parts += ["", "```", str(parsed["patch"]).strip(), "```"]
+    refs = parsed.get("references") or []
     if refs:
         parts += ["", "**References:**", *[f"- {r}" for r in refs]]
+    return "\n".join(parts).strip()
+
+
+# ----------------------------------------------------------------- poc stage
+
+_POC_SYSTEM = (
+    "You are a senior application-security engineer writing a proof-of-concept "
+    "for a confirmed vulnerability. Produce a single self-contained script an "
+    "analyst can run against a target of their choosing. The PoC must NOT "
+    "hardcode a target — take the target host/URL as an argument or a clearly "
+    "marked variable at the top, with a short usage comment. Do not run "
+    "anything; just produce the file.\n\n"
+    'Return JSON: {"filename": "poc_x.py", "language": "python|bash|javascript|'
+    'go|ruby|php|http|text", "poc": "the complete script", '
+    '"usage": "how to run it and what to point it at"}'
+    + _JSON_RULES
+)
+
+_POC_LANG = {
+    "python": (".py", "text/x-python"), "bash": (".sh", "text/x-shellscript"),
+    "sh": (".sh", "text/x-shellscript"), "javascript": (".js", "text/javascript"),
+    "typescript": (".ts", "text/plain"), "go": (".go", "text/plain"),
+    "ruby": (".rb", "text/x-ruby"), "php": (".php", "text/x-php"),
+    "http": (".http", "text/plain"), "text": (".txt", "text/plain"),
+}
+
+
+def _run_poc_stage(db, run) -> str:
+    import hashlib
+
+    case = db.get(models.Case, run.case_id)
+    finding = db.get(models.Finding, run.finding_id) if run.finding_id else None
+    if finding is None:
+        raise RuntimeError("a PoC needs a finding")
+    provider = _provider(db, run)
+
+    prior = _prior(db, run, models.StageType.source)
+    user = _finding_ctx(case, finding)
+    if prior:
+        user += f"\n# Prior source investigation\n\n{prior}\n"
+    else:
+        user += f"\n{_digest_for(db, run, budget=100_000, focus=finding.affected_component)}\n"
+    user += "\nWrite the PoC (target NOT hardcoded) and return the JSON object."
+
+    parsed, raw = _ask_json(provider, _POC_SYSTEM, user)
+    if not isinstance(parsed, dict) or not (parsed.get("poc") or "").strip():
+        raise StageModelError("The model did not return a PoC script.", raw)
+
+    code = parsed["poc"]
+    lang = (parsed.get("language") or "text").strip().lower()
+    ext, ctype = _POC_LANG.get(lang, (".txt", "text/plain"))
+    fname = (parsed.get("filename") or "").strip() or f"poc_{finding.id[:8]}{ext}"
+    if "." not in fname:
+        fname += ext
+    usage = (parsed.get("usage") or "").strip()
+
+    rawb = code.encode("utf-8")
+    att = models.Attachment(
+        user_id=case.user_id, agent_id=None, session_id=None,
+        scan_id=case.scan_id, finding_id=finding.id,
+        filename=fname, original_path=None, content_type=ctype,
+        sha256=hashlib.sha256(rawb).hexdigest(), size_bytes=len(rawb),
+        content_enc=crypto.encrypt(rawb),
+    )
+    db.add(att)
+    db.flush()
+    run.artifact_id = att.id
+
+    parts = [f"# Proof of concept — {finding.title or 'finding'}", "",
+             f"**File:** `{fname}` ({lang}) — download it and run against your own target."]
+    if usage:
+        parts += ["", f"**Usage:** {usage}"]
+    parts += ["", "```" + (lang if lang != "text" else ""), code.strip(), "```"]
     return "\n".join(parts).strip()
 
 
@@ -549,7 +576,7 @@ _REPORT_SYSTEM = (
 def _run_report_stage(db, run) -> str:
     case = db.get(models.Case, run.case_id)
     provider = _provider(db, run)
-    report = crypto.decrypt(case.report_enc).decode("utf-8", "replace") if case.report_enc else ""
+    report = _report_text(case)
 
     findings = case.scan.finding_rows if case.scan else []
     blocks = [f"# Case: {case.title or '(untitled)'}", "", f"Inbound report:\n{report or '(none)'}", ""]
@@ -572,213 +599,41 @@ def _run_report_stage(db, run) -> str:
 
     text = provider.chat(_REPORT_SYSTEM, [{"role": "user", "content": context}], max_tokens=16384)
     text = (text or "").strip()
+    log.info("report stage produced %d chars", len(text))
     if not text:
-        raise RuntimeError("the model produced an empty report")
+        raise StageModelError("The model produced an empty report.", "")
 
-    # Save a downloadable generated Report, like the chat/analytics path.
     raw = text.encode("utf-8")
     fname = f"investigation-{case.id[:8]}.md"
-    rpt = models.Report(
+    db.add(models.Report(
         user_id=case.user_id, agent_id=None,
         source_tool=models.SourceTool.generated,
         filename=fname, original_path=None,
         sha256=__import__("hashlib").sha256(raw).hexdigest(),
         size_bytes=len(raw), content_enc=crypto.encrypt(raw),
         project_id=case.project_id,
-    )
-    db.add(rpt)
+    ))
     return text
-
-
-# ------------------------------------------------------------ discover stage
-
-_DISCOVER_SYSTEM = (
-    "You are a senior application-security engineer triaging a case. You are "
-    "given an inbound bug report (which may describe one or more issues, or may "
-    "just be context) and read-only access to the product's source tree. Your "
-    "job: identify the real, concrete vulnerabilities. Include every issue the "
-    "report describes AND any additional vulnerabilities you find by reading the "
-    "source. Ground each in the code — do not invent issues the code does not "
-    "support. When done, call submit_findings ONCE with the full list. If you "
-    "genuinely find nothing, submit an empty list."
-)
-
-_DISCOVER_TOOL = ToolSpec(
-    name="submit_findings",
-    description="Submit the list of vulnerabilities found. Call exactly once.",
-    parameters={
-        "type": "object",
-        "properties": {
-            "findings": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string", "description": "Short, specific title."},
-                        "severity": {"type": "string", "enum": ["critical","high","medium","low","info","unknown"]},
-                        "cwe": {"type": "string", "description": "e.g. CWE-1321 (optional)."},
-                        "affected_component": {"type": "string", "description": "file/module, e.g. 'index.js'."},
-                        "description": {"type": "string", "description": "What it is and why it's exploitable, cite file:line."},
-                    },
-                    "required": ["title"],
-                },
-            },
-        },
-        "required": ["findings"],
-    },
-)
-
-_MAX_DISCOVERED = 50
-
-
-def _run_discover_stage(db, run) -> str:
-    case = db.get(models.Case, run.case_id)
-    if case.scan_id is None:
-        raise RuntimeError("case has no scan to attach findings to")
-    provider = _provider(db, run)
-
-    report = crypto.decrypt(case.report_enc).decode("utf-8", "replace") if case.report_enc else ""
-    user = (
-        f"# Inbound bug report / notes\n\n{report or '(none provided)'}\n\n"
-        "Read the source tree, identify the vulnerabilities, and call "
-        "submit_findings with the complete list."
-    )
-
-    args, text = _run_read_tool_loop(db, run, provider, _DISCOVER_SYSTEM,
-                                     [_DISCOVER_TOOL], user, "submit_findings")
-    if args is None:
-        raise RuntimeError("the model finished without submitting findings")
-
-    items = args.get("findings") or []
-    created = 0
-    rows = []
-    for it in items[:_MAX_DISCOVERED]:
-        title = (it.get("title") or "").strip()
-        if not title:
-            continue
-        sev_raw = (it.get("severity") or "unknown").strip().lower()
-        try:
-            sev = models.Severity(sev_raw)
-        except ValueError:
-            sev = models.Severity.unknown
-        f = models.Finding(
-            scan_id=case.scan_id, user_id=case.user_id,
-            title=title[:512], severity=sev,
-            cwe=(it.get("cwe") or "").strip()[:64],
-            affected_component=(it.get("affected_component") or "").strip()[:512],
-            description=(it.get("description") or "").strip(),
-        )
-        db.add(f)
-        created += 1
-        rows.append((title, sev.value, it.get("cwe") or "-", it.get("affected_component") or "-"))
-
-    parts = [f"# Discovery — {created} finding(s)", ""]
-    if created:
-        parts += ["| # | Title | Severity | CWE | Component |", "|---|---|---|---|---|"]
-        for i, (t, sv, cwe, comp) in enumerate(rows, 1):
-            parts.append(f"| {i} | {t} | {sv} | {cwe} | {comp} |")
-    else:
-        parts.append("No vulnerabilities identified from the report and source.")
-    return "\n".join(parts).strip()
-
-
-# ----------------------------------------------------------------- poc stage
-
-_POC_SYSTEM = (
-    "You are a senior application-security engineer writing a proof-of-concept "
-    "for a confirmed vulnerability. Read the source with the read-only tools to "
-    "ground the PoC in the real code paths. Then call submit_poc ONCE with a "
-    "single self-contained script an analyst can run against a target of their "
-    "choosing. The PoC must NOT hardcode a target — take the target host/URL as "
-    "an argument or a clearly-marked variable at the top. Add a short usage "
-    "comment. Do not run anything; just produce the file."
-)
-
-# Map a declared language to a filename extension + content type.
-_POC_LANG = {
-    "python": (".py", "text/x-python"), "bash": (".sh", "text/x-shellscript"),
-    "sh": (".sh", "text/x-shellscript"), "javascript": (".js", "text/javascript"),
-    "typescript": (".ts", "text/plain"), "go": (".go", "text/plain"),
-    "ruby": (".rb", "text/x-ruby"), "php": (".php", "text/x-php"),
-    "http": (".http", "text/plain"), "text": (".txt", "text/plain"),
-}
-
-_POC_TOOL = ToolSpec(
-    name="submit_poc",
-    description="Submit the finished proof-of-concept file. Call exactly once.",
-    parameters={
-        "type": "object",
-        "properties": {
-            "filename": {"type": "string", "description": "Suggested filename, e.g. 'poc_upload_rce.py'."},
-            "language": {"type": "string", "description": "python | bash | javascript | go | ruby | php | http | text"},
-            "poc": {"type": "string", "description": "The complete PoC script. Target is a variable/argument, never hardcoded."},
-            "usage": {"type": "string", "description": "One or two lines on how to run it and what to point it at."},
-        },
-        "required": ["poc"],
-    },
-)
-
-
-def _run_poc_stage(db, run) -> str:
-    import hashlib
-    case = db.get(models.Case, run.case_id)
-    finding = db.get(models.Finding, run.finding_id) if run.finding_id else None
-    if finding is None:
-        raise RuntimeError("a PoC needs a finding")
-    provider = _provider(db, run)
-
-    user = _finding_ctx(case, finding)
-    prior = _prior(db, run, models.StageType.source)
-    if prior:
-        user += f"\n# Prior source investigation\n\n{prior}\n"
-    user += "\nWrite the PoC and call submit_poc. Do not hardcode a target."
-
-    args, text = _run_read_tool_loop(db, run, provider, _POC_SYSTEM, [_POC_TOOL], user, "submit_poc")
-    if args is None or not (args.get("poc") or "").strip():
-        raise RuntimeError("the model finished without submitting a PoC")
-
-    code = args["poc"]
-    lang = (args.get("language") or "text").strip().lower()
-    ext, ctype = _POC_LANG.get(lang, (".txt", "text/plain"))
-    fname = (args.get("filename") or "").strip() or f"poc_{finding.id[:8]}{ext}"
-    if "." not in fname:
-        fname += ext
-    usage = (args.get("usage") or "").strip()
-
-    raw = code.encode("utf-8")
-    att = models.Attachment(
-        user_id=case.user_id, agent_id=None, session_id=None,
-        scan_id=case.scan_id, finding_id=finding.id,
-        filename=fname, original_path=None, content_type=ctype,
-        sha256=hashlib.sha256(raw).hexdigest(), size_bytes=len(raw),
-        content_enc=crypto.encrypt(raw),
-    )
-    db.add(att)
-    db.flush()
-    run.artifact_id = att.id
-
-    parts = [f"# Proof of concept — {finding.title or 'finding'}", ""]
-    parts.append(f"**File:** `{fname}` ({lang}) — download it and run against your own target.")
-    if usage:
-        parts += ["", f"**Usage:** {usage}"]
-    parts += ["", "```" + (lang if lang != "text" else ""), code.strip(), "```"]
-    return "\n".join(parts).strip()
 
 
 # --------------------------------------------------------------- dispatch
 
 _RUNNERS = {
+    models.StageType.discover: _run_discover_stage,
     models.StageType.source: _run_source_stage,
     models.StageType.impact: _run_impact_stage,
     models.StageType.remediation: _run_remediation_stage,
-    models.StageType.report: _run_report_stage,
     models.StageType.poc: _run_poc_stage,
-    models.StageType.discover: _run_discover_stage,
+    models.StageType.report: _run_report_stage,
 }
 
 
 def run_stage(db, run: models.StageRun) -> None:
-    """Execute one stage run synchronously, updating its lifecycle + output."""
+    """Execute one stage run synchronously, updating its lifecycle + output.
+
+    On a model/parse failure the model's raw response is preserved as the run's
+    output (viewable in the UI) and logged, so an error is never a dead end.
+    """
     runner = _RUNNERS.get(run.stage)
     run.status = models.StageRunStatus.running
     run.started_at = dt.datetime.now(dt.timezone.utc)
@@ -796,6 +651,15 @@ def run_stage(db, run: models.StageRun) -> None:
         output = runner(db, run)
         run.output_enc = crypto.encrypt(output.encode("utf-8"))
         run.status = models.StageRunStatus.done
+    except StageModelError as e:
+        run.status = models.StageRunStatus.error
+        run.error = e.reason[:2000]
+        if e.raw:
+            # Keep the model's actual words so the operator can see what happened.
+            body = "## The model's response (couldn't be used)\n\n" + e.raw
+            run.output_enc = crypto.encrypt(body.encode("utf-8"))
+        log.warning("stage %s (%s) model error: %s | raw=%r",
+                    run.id, run.stage.value, e.reason, e.raw[:500])
     except AIProviderError as e:
         run.status = models.StageRunStatus.error
         run.error = e.detail(is_admin=False)[:2000]
