@@ -51,6 +51,10 @@ def _base_url_row(provider: str) -> str:
     return f"ai_base_url:{provider}"
 
 
+def _ctx_row(provider: str) -> str:
+    return f"ai_context:{provider}"
+
+
 # ---------------- store helpers ----------------
 
 def get_setting(db: Session, key: str) -> str | None:
@@ -93,6 +97,11 @@ def load_ai_settings(db: Session):
             setattr(provider_keys, f"{info.attr}_model", m)
         if b := get_setting(db, _base_url_row(name)):
             setattr(provider_keys, f"{info.attr}_base_url", b)
+        if c := get_setting(db, _ctx_row(name)):
+            try:
+                setattr(provider_keys, f"{info.attr}_context_window", int(c))
+            except ValueError:
+                pass
     if active := get_setting(db, ACTIVE_PROVIDER):
         if active in PROVIDERS:
             app_settings.default_ai_provider = active
@@ -117,6 +126,7 @@ class ProviderOut(BaseModel):
     supports_tools: bool
     self_hosted: bool
     is_active: bool
+    context_window: int
 
 
 class AISettingsOut(BaseModel):
@@ -130,6 +140,7 @@ class AISettingsIn(BaseModel):
     api_key: str | None = None
     model: str | None = None
     base_url: str | None = None
+    context_window: int | None = None
 
 
 class ActiveProviderIn(BaseModel):
@@ -176,6 +187,7 @@ def _describe(db: Session, name: str) -> ProviderOut:
         supports_tools=info.supports_tools,
         self_hosted=info.self_hosted,
         is_active=(name == canonical(None)),
+        context_window=int(getattr(provider_keys, f"{info.attr}_context_window", 8192) or 8192),
     )
 
 
@@ -236,6 +248,10 @@ def put_ai_settings(
             delete_setting(db, _base_url_row(name))
             setattr(provider_keys, f"{info.attr}_base_url",
                     getattr(ProviderKeys(), f"{info.attr}_base_url", ""))
+
+    if body.context_window is not None and body.context_window > 0:
+        set_setting(db, _ctx_row(name), str(int(body.context_window)), actor.id)
+        setattr(provider_keys, f"{info.attr}_context_window", int(body.context_window))
 
     db.commit()
     return get_ai_settings(db=db, actor=actor)

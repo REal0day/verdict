@@ -52,14 +52,18 @@ class Settings(BaseSettings):
     default_ai_provider: str = "anthropic"
     anthropic_api_key: str | None = None
     anthropic_model: str = "claude-opus-4-5"
+    anthropic_context_window: int = 200000
     openai_api_key: str | None = None
     openai_model: str = "gpt-4o"
     openai_base_url: str = "https://api.openai.com/v1"
+    openai_context_window: int = 128000
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-1.5-pro"
+    gemini_context_window: int = 1000000
     xai_api_key: str | None = None
     xai_model: str = "grok-2"
     xai_base_url: str = "https://api.x.ai/v1"
+    xai_context_window: int = 128000
 
     # Self-hosted / local model speaking the OpenAI chat API (Ollama, vLLM,
     # LM Studio, LiteLLM, OpenRouter). Set base_url to point at it; the key is
@@ -84,9 +88,14 @@ class ProviderKeys(BaseSettings):
     xai_api_key: str | None = None
     xai_model: str = "grok-2"
     xai_base_url: str = "https://api.x.ai/v1"
+    anthropic_context_window: int = 200000
+    openai_context_window: int = 128000
+    gemini_context_window: int = 1000000
+    xai_context_window: int = 128000
     local_ai_base_url: str = ""
     local_ai_model: str = ""
     local_ai_api_key: str | None = None
+    local_ai_context_window: int = 8192
 
 
 settings = Settings()

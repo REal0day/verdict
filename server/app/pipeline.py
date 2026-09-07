@@ -26,7 +26,7 @@ from pathlib import Path
 from . import crypto, cvss, models
 from .ai import scope
 from .ai.base import get_provider
-from .ai.errors import AIProviderError
+from .ai.errors import AIProviderError, AIProviderUnavailable
 from .config import settings
 
 log = logging.getLogger("irs.pipeline")
@@ -47,6 +47,42 @@ class StageModelError(RuntimeError):
         self.reason = reason
         self.raw = raw or ""
         super().__init__(reason)
+
+
+# Rough chars-per-token for sizing prompts to a model's context window. Code is
+# token-dense, so this is deliberately low (safe) rather than the ~4 of prose.
+_CHARS_PER_TOKEN = 3.3
+# Signatures of an upstream "prompt too long for the context" rejection.
+_CTX_ERROR_MARKERS = ("context length", "context window", "n_ctx", "n_keep",
+                      "maximum context", "too long", "exceeds")
+
+
+class StageInputTooBig(RuntimeError):
+    """The prompt (mostly the source digest) doesn't fit the model's context."""
+
+    def __init__(self, prompt_tokens: int, context_window: int):
+        self.prompt_tokens = prompt_tokens
+        self.context_window = context_window
+        super().__init__("source too big for the model's context window")
+
+    @property
+    def message(self) -> str:
+        return (
+            f"The source is about {self.prompt_tokens:,} tokens but this model's "
+            f"context window is {self.context_window:,}. Fixes: load the model "
+            f"with a larger context (e.g. LM Studio → Context Length) and set it "
+            f"under Settings → AI; attach a narrower source path; or use a model "
+            f"with a bigger context. (A guided large-repo mode is planned.)"
+        )
+
+
+def _est_tokens(text: str) -> int:
+    return int(len(text or "") / _CHARS_PER_TOKEN)
+
+
+def _is_context_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return any(m in msg for m in _CTX_ERROR_MARKERS)
 
 
 def submit(run_id: str) -> None:
@@ -176,14 +212,40 @@ def _extract_json(text: str):
     return None
 
 
-def _ask_json(provider, system: str, user: str, max_tokens: int = 8192):
-    """Chat, log the raw response, and extract JSON. Returns (parsed_or_None, raw)."""
-    raw = provider.chat(system, [{"role": "user", "content": user}], max_tokens=max_tokens) or ""
+def _fit_output(provider, system: str, user: str, want_output: int) -> int:
+    """Cap output tokens to what's left in the context, and refuse a prompt that
+    can't fit at all (StageInputTooBig) — rather than let the endpoint 400."""
+    ctx = int(getattr(provider, "context_window", 8192) or 8192)
+    prompt_tokens = _est_tokens(system) + _est_tokens(user)
+    out = min(want_output, max(256, ctx // 4))
+    if prompt_tokens + out > ctx:
+        # Try shrinking the output first; if the prompt alone won't fit, give up.
+        out = ctx - prompt_tokens - 64
+        if out < 256:
+            raise StageInputTooBig(prompt_tokens, ctx)
+    return out
+
+
+def _chat(provider, system: str, user: str, want_output: int) -> str:
+    out = _fit_output(provider, system, user, want_output)
+    try:
+        raw = provider.chat(system, [{"role": "user", "content": user}], max_tokens=out) or ""
+    except AIProviderUnavailable as e:
+        if _is_context_error(e):
+            raise StageInputTooBig(_est_tokens(system) + _est_tokens(user),
+                                   int(getattr(provider, "context_window", 8192) or 8192))
+        raise
     log.info(
         "stage model response via %s (%d chars): %s%s",
         getattr(provider, "display_name", getattr(provider, "name", "?")),
         len(raw), raw[:2000], "…(truncated in log)" if len(raw) > 2000 else "",
     )
+    return raw
+
+
+def _ask_json(provider, system: str, user: str, max_tokens: int = 8192):
+    """Chat (context-aware), log the raw response, and extract JSON."""
+    raw = _chat(provider, system, user, max_tokens)
     return _extract_json(raw), raw
 
 
@@ -597,8 +659,7 @@ def _run_report_stage(db, run) -> str:
         blocks.append("")
     context = "\n".join(blocks)[:120_000]
 
-    text = provider.chat(_REPORT_SYSTEM, [{"role": "user", "content": context}], max_tokens=16384)
-    text = (text or "").strip()
+    text = _chat(provider, _REPORT_SYSTEM, context, want_output=16384).strip()
     log.info("report stage produced %d chars", len(text))
     if not text:
         raise StageModelError("The model produced an empty report.", "")
@@ -651,6 +712,10 @@ def run_stage(db, run: models.StageRun) -> None:
         output = runner(db, run)
         run.output_enc = crypto.encrypt(output.encode("utf-8"))
         run.status = models.StageRunStatus.done
+    except StageInputTooBig as e:
+        run.status = models.StageRunStatus.error
+        run.error = e.message[:2000]
+        log.warning("stage %s (%s): %s", run.id, run.stage.value, e.message)
     except StageModelError as e:
         run.status = models.StageRunStatus.error
         run.error = e.reason[:2000]

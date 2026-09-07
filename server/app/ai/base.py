@@ -21,6 +21,7 @@ class AIProvider(ABC):
     name: str
     display_name: str
     model: str
+    context_window: int = 200000   # tokens; overridden per configured provider
 
     @abstractmethod
     def chat(self, system: str, messages: list[dict], max_tokens: int | None = None) -> str:
@@ -133,6 +134,7 @@ class ResolvedProvider:
     api_key: str | None
     model: str
     base_url: str
+    context_window: int
 
 
 def resolve(name: str | None = None) -> ResolvedProvider:
@@ -153,7 +155,8 @@ def resolve(name: str | None = None) -> ResolvedProvider:
     base = getattr(provider_keys, f"{info.attr}_base_url", "") or ""
     if info.self_hosted:
         base = resolve_local_url(normalise_base_url(base))
-    return ResolvedProvider(info=info, api_key=key, model=model, base_url=base)
+    ctx = int(getattr(provider_keys, f"{info.attr}_context_window", 8192) or 8192)
+    return ResolvedProvider(info=info, api_key=key, model=model, base_url=base, context_window=ctx)
 
 
 def is_configured(name: str | None = None) -> bool:
@@ -179,10 +182,14 @@ def get_provider(name: str | None = None, model: str | None = None) -> AIProvide
     n = r.info.name
     chosen_model = model or r.model
 
+    def _with_ctx(prov):
+        prov.context_window = r.context_window
+        return prov
+
     if n == "anthropic":
-        return AnthropicProvider(api_key=r.api_key, model=chosen_model)
+        return _with_ctx(AnthropicProvider(api_key=r.api_key, model=chosen_model))
     if n == "gemini":
-        return GeminiProvider(api_key=r.api_key, model=chosen_model)
+        return _with_ctx(GeminiProvider(api_key=r.api_key, model=chosen_model))
     if n == "local":
         if not r.base_url:
             raise AIKeyMissing("Local model", "LOCAL_AI_BASE_URL")
@@ -192,7 +199,7 @@ def get_provider(name: str | None = None, model: str | None = None) -> AIProvide
                 "No model id is set for the local endpoint.",
                 "Set it under Settings → AI (or LOCAL_AI_MODEL), e.g. 'llama3.1:8b'.",
             )
-    return OpenAICompatibleProvider(
+    return _with_ctx(OpenAICompatibleProvider(
         name=n,
         display_name=r.info.display_name,
         base_url=r.base_url,
@@ -200,4 +207,4 @@ def get_provider(name: str | None = None, model: str | None = None) -> AIProvide
         model=chosen_model,
         env_var=r.info.env_key,
         requires_key=r.info.requires_key,
-    )
+    ))

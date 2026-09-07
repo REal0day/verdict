@@ -24,8 +24,9 @@ class FakeProvider:
     """chat() returns whatever `reply` is set to (a string). Records prompts."""
     display_name = "Fake"
     model = "fake-1"
-    def __init__(self, reply=""):
+    def __init__(self, reply="", context_window=200000):
         self.reply = reply
+        self.context_window = context_window
         self.calls = []
     def chat(self, system, messages, max_tokens=None):
         self.calls.append(messages[-1]["content"])
@@ -219,3 +220,35 @@ def test_unregistered_stage_errors_cleanly(env, monkeypatch):
     run = _run(env, FakeProvider("{}"), stage=models.StageType.poc)
     assert run.status == models.StageRunStatus.error
     assert "not implemented" in run.error
+
+
+# ---------------- context-window sizing ----------------
+
+def test_source_too_big_errors_clearly_not_a_raw_400(env):
+    provider = _J({"findings": []})
+    provider.context_window = 100   # tiny — the digest can't fit
+    run = _run(env, provider, stage=models.StageType.discover, finding=False)
+    assert run.status == models.StageRunStatus.error
+    assert "context window" in run.error and "100" in run.error
+
+
+def test_output_tokens_are_capped_to_the_context(env):
+    captured = {}
+    class P(FakeProvider):
+        def chat(self, system, messages, max_tokens=None):
+            captured["max_tokens"] = max_tokens
+            return '{"findings": []}'
+    provider = P(context_window=4096)
+    _run(env, provider, stage=models.StageType.discover, finding=False)
+    # never request more output than a quarter of the (small) context
+    assert captured["max_tokens"] <= 4096 // 4
+
+
+def test_endpoint_context_400_becomes_a_clear_error(env):
+    from app.ai.errors import AIProviderUnavailable
+    class P(FakeProvider):
+        def chat(self, system, messages, max_tokens=None):
+            raise AIProviderUnavailable("Local model", "n_keep 10341 >= n_ctx 4096 context length")
+    run = _run(env, P(context_window=32000), stage=models.StageType.discover, finding=False)
+    assert run.status == models.StageRunStatus.error
+    assert "context window" in run.error

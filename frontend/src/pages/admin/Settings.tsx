@@ -23,6 +23,7 @@ type Provider = {
   supports_tools: boolean;
   self_hosted: boolean;
   is_active: boolean;
+  context_window: number;
 };
 
 type AISettings = { active_provider: string; providers: Provider[] };
@@ -135,6 +136,7 @@ function ProviderCard({ p }: { p: Provider }) {
   const [key, setKey] = useState("");
   const [model, setModel] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
+  const [ctx, setCtx] = useState("");
   const [saved, setSaved] = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
 
@@ -144,13 +146,14 @@ function ProviderCard({ p }: { p: Provider }) {
       ...(key ? { api_key: key } : {}),
       ...(model ? { model } : {}),
       ...(baseUrl ? { base_url: baseUrl } : {}),
+      ...(ctx && Number(ctx) > 0 ? { context_window: Number(ctx) } : {}),
     };
   }
 
   const save = useMutation({
     mutationFn: () => api<AISettings>("/settings/ai", { method: "PUT", body: body() }),
     onSuccess: () => {
-      setKey(""); setModel(""); setBaseUrl(""); setSaved(true);
+      setKey(""); setModel(""); setBaseUrl(""); setCtx(""); setSaved(true);
       qc.invalidateQueries({ queryKey: ["ai-settings"] });
     },
   });
@@ -164,7 +167,7 @@ function ProviderCard({ p }: { p: Provider }) {
     },
     onSuccess: (r) => {
       setTestResult(r); setSaved(true);
-      setKey(""); setModel(""); setBaseUrl("");
+      setKey(""); setModel(""); setBaseUrl(""); setCtx("");
       qc.invalidateQueries({ queryKey: ["ai-settings"] });
       qc.invalidateQueries({ queryKey: ["ai-status"] });
     },
@@ -216,6 +219,25 @@ function ProviderCard({ p }: { p: Provider }) {
                 A model on this machine: use <code>localhost</code> — the server
                 rewrites it to reach your host from inside Docker. A model on
                 another box: use its hostname. <code>/v1</code> is added if omitted.
+              </p>
+            </div>
+          ) : null}
+
+          {p.self_hosted ? (
+            <div>
+              <Label htmlFor={`ctx-${p.name}`}>Context window (tokens)</Label>
+              <Input
+                id={`ctx-${p.name}`}
+                type="number"
+                value={ctx}
+                onChange={(e) => { setCtx(e.target.value); setSaved(false); }}
+                placeholder={String(p.context_window)}
+              />
+              <p className="text-[11px] text-fgmuted mt-1">
+                Must match how the model is loaded (e.g. LM Studio → <strong>Context
+                Length</strong>). If a stage errors with “source too big for the
+                context window,” raise this here <em>and</em> reload the model with a
+                larger context. Current: <code>{p.context_window.toLocaleString()}</code>.
               </p>
             </div>
           ) : null}

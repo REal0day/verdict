@@ -639,6 +639,30 @@ constraints to resolve there:
       the stage stores the model's raw response (viewable in the UI) and logs
       it, so an error is never a dead end.
 
+- [x] **Context-aware prompt sizing** — *landed.* Stages estimate the prompt
+      size and compare it to the model's configured context window (a new
+      per-provider setting; local defaults to 8192, editable in the UI with an
+      LM Studio tip). Output tokens are capped to fit, and a prompt that can't
+      fit produces a clear, actionable error ("source is ~N tokens but the
+      context window is M — raise it / narrow the source") instead of a raw
+      HTTP 400. An upstream context-overflow 400 is caught and translated the
+      same way.
+
+- [ ] **Large-repo guided mode** (the human-in-the-loop workflow). When the
+      source is too big for the context window, don't silently truncate — walk
+      the user through it:
+      1. Detect the overflow and **block the stage with a prompt to the user**.
+      2. Ask whether they want to **add scope/instructions** (which dirs/files
+         matter, extra context). If given, use that and proceed on the narrowed
+         scope.
+      3. If not, have the model **map the repo by sections/directories** first,
+         then **offer a choice before kickoff**: fan out **multiple agents** to
+         cover the whole tree in parallel, or go **sequentially** across it.
+      4. Let the user pick the approach before any model spend.
+      This is a sizable, stateful feature (new blocked/awaiting-input states,
+      a repo-map step, and parallel-vs-sequential orchestration) — its own
+      build, on top of the sizing above.
+
 - [x] **Discover** (case-level, source scan → findings table) — *landed.* The
       primary entry point: attach source, click **Discover vulns**, and the
       model reads the report (as notes) + scans the whole source tree and
