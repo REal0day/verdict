@@ -837,6 +837,8 @@ class StageRunOut(BaseModel):
     resolved: ResolvedModel | None = None
     session_id: str | None
     has_output: bool = False
+    artifact_id: str | None = None
+    artifact_name: str | None = None
     error: str
     created_at: dt.datetime
     updated_at: dt.datetime

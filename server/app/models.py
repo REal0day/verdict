@@ -1099,6 +1099,9 @@ class StageRun(Base):
     ai_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     # If the stage ran as an agent session, which one (for the transcript).
     session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # A downloadable artefact this run produced (e.g. the PoC file) — an
+    # Attachment id. NULL for stages that only produce text.
+    artifact_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     # The stage's produced text, encrypted at rest.
     output_enc: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     error: Mapped[str] = mapped_column(Text, default="", nullable=False)

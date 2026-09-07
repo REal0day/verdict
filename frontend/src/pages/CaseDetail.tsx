@@ -9,9 +9,10 @@ import { Badge, SeverityChip } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input, Label, Select } from "@/components/ui/Input";
 import { statusBadge, type CaseOut } from "./Cases";
+import { downloadFile } from "@/lib/download";
 import {
   ArrowLeft, FolderGit2, HardDrive, Upload, FolderTree, Check, AlertCircle,
-  Play, Trash2, ListChecks, FileText, RotateCw, ChevronDown, ChevronRight, Loader2,
+  Play, Trash2, ListChecks, FileText, RotateCw, ChevronDown, ChevronRight, Loader2, Download,
 } from "lucide-react";
 
 type ResolvedModel = { provider: string | null; model: string | null; source: string };
@@ -19,6 +20,7 @@ type StageRun = {
   id: string; case_id: string; finding_id: string | null; finding_title: string | null;
   stage: string; status: string; ai_provider: string | null; ai_model: string | null;
   resolved: ResolvedModel | null; session_id: string | null; has_output: boolean;
+  artifact_id: string | null; artifact_name: string | null;
   error: string; created_at: string;
 };
 type FindingRow = {
@@ -338,7 +340,7 @@ function StagesCard({ c, onChange }: { c: CaseDetailT; onChange: () => void }) {
                   disabled={queue.isPending || (!isReport && !findingId)}>
             <Play size={13} /> Queue
           </Button>
-          <span className="text-[11px] text-fgmuted">source runs now (reads the code); other stages are coming.</span>
+          <span className="text-[11px] text-fgmuted">runs on the executor; drains over time.</span>
         </div>
         {queue.isError ? (
           <p className="text-xs text-danger">{(queue.error as any)?.detail || "Couldn't queue that stage."}</p>
@@ -388,6 +390,13 @@ function StageRow({ caseId, run, onChange }: {
         <span className="text-xs text-fgmuted w-40 truncate" title={run.resolved ? `via ${run.resolved.source}` : ""}>
           {run.resolved ? `${run.resolved.provider ?? "default"}${run.resolved.model ? ` / ${run.resolved.model}` : ""}` : "—"}
         </span>
+        {run.artifact_id ? (
+          <button type="button" title={`Download ${run.artifact_name || "artifact"}`}
+                  onClick={() => downloadFile(`/cases/${caseId}/stages/${run.id}/artifact`, run.artifact_name || undefined)}
+                  className="text-fgmuted hover:text-primary">
+            <Download size={13} />
+          </button>
+        ) : null}
         <button type="button" onClick={() => rerun.mutate()} disabled={rerun.isPending || run.status === "running"}
                 title="Re-run this stage" className="text-fgmuted hover:text-primary disabled:opacity-30">
           <RotateCw size={13} className={rerun.isPending ? "animate-spin" : ""} />

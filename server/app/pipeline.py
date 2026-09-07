@@ -590,6 +590,89 @@ def _run_report_stage(db, run) -> str:
     return text
 
 
+# ----------------------------------------------------------------- poc stage
+
+_POC_SYSTEM = (
+    "You are a senior application-security engineer writing a proof-of-concept "
+    "for a confirmed vulnerability. Read the source with the read-only tools to "
+    "ground the PoC in the real code paths. Then call submit_poc ONCE with a "
+    "single self-contained script an analyst can run against a target of their "
+    "choosing. The PoC must NOT hardcode a target — take the target host/URL as "
+    "an argument or a clearly-marked variable at the top. Add a short usage "
+    "comment. Do not run anything; just produce the file."
+)
+
+# Map a declared language to a filename extension + content type.
+_POC_LANG = {
+    "python": (".py", "text/x-python"), "bash": (".sh", "text/x-shellscript"),
+    "sh": (".sh", "text/x-shellscript"), "javascript": (".js", "text/javascript"),
+    "typescript": (".ts", "text/plain"), "go": (".go", "text/plain"),
+    "ruby": (".rb", "text/x-ruby"), "php": (".php", "text/x-php"),
+    "http": (".http", "text/plain"), "text": (".txt", "text/plain"),
+}
+
+_POC_TOOL = ToolSpec(
+    name="submit_poc",
+    description="Submit the finished proof-of-concept file. Call exactly once.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "filename": {"type": "string", "description": "Suggested filename, e.g. 'poc_upload_rce.py'."},
+            "language": {"type": "string", "description": "python | bash | javascript | go | ruby | php | http | text"},
+            "poc": {"type": "string", "description": "The complete PoC script. Target is a variable/argument, never hardcoded."},
+            "usage": {"type": "string", "description": "One or two lines on how to run it and what to point it at."},
+        },
+        "required": ["poc"],
+    },
+)
+
+
+def _run_poc_stage(db, run) -> str:
+    import hashlib
+    case = db.get(models.Case, run.case_id)
+    finding = db.get(models.Finding, run.finding_id) if run.finding_id else None
+    if finding is None:
+        raise RuntimeError("a PoC needs a finding")
+    provider = _provider(db, run)
+
+    user = _finding_ctx(case, finding)
+    prior = _prior(db, run, models.StageType.source)
+    if prior:
+        user += f"\n# Prior source investigation\n\n{prior}\n"
+    user += "\nWrite the PoC and call submit_poc. Do not hardcode a target."
+
+    args, text = _run_read_tool_loop(db, run, provider, _POC_SYSTEM, [_POC_TOOL], user, "submit_poc")
+    if args is None or not (args.get("poc") or "").strip():
+        raise RuntimeError("the model finished without submitting a PoC")
+
+    code = args["poc"]
+    lang = (args.get("language") or "text").strip().lower()
+    ext, ctype = _POC_LANG.get(lang, (".txt", "text/plain"))
+    fname = (args.get("filename") or "").strip() or f"poc_{finding.id[:8]}{ext}"
+    if "." not in fname:
+        fname += ext
+    usage = (args.get("usage") or "").strip()
+
+    raw = code.encode("utf-8")
+    att = models.Attachment(
+        user_id=case.user_id, agent_id=None, session_id=None,
+        scan_id=case.scan_id, finding_id=finding.id,
+        filename=fname, original_path=None, content_type=ctype,
+        sha256=hashlib.sha256(raw).hexdigest(), size_bytes=len(raw),
+        content_enc=crypto.encrypt(raw),
+    )
+    db.add(att)
+    db.flush()
+    run.artifact_id = att.id
+
+    parts = [f"# Proof of concept — {finding.title or 'finding'}", ""]
+    parts.append(f"**File:** `{fname}` ({lang}) — download it and run against your own target.")
+    if usage:
+        parts += ["", f"**Usage:** {usage}"]
+    parts += ["", "```" + (lang if lang != "text" else ""), code.strip(), "```"]
+    return "\n".join(parts).strip()
+
+
 # --------------------------------------------------------------- dispatch
 
 _RUNNERS = {
@@ -597,6 +680,7 @@ _RUNNERS = {
     models.StageType.impact: _run_impact_stage,
     models.StageType.remediation: _run_remediation_stage,
     models.StageType.report: _run_report_stage,
+    models.StageType.poc: _run_poc_stage,
 }
 
 

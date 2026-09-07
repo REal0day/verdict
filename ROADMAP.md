@@ -523,7 +523,7 @@ model-agnostic, multi-stage workflow — with a different model assignable to
 each stage, because in practice one model refuses to write exploit code while
 another will, and the analyst should be able to route around that per stage.
 
-**Status:** planned. The design below is agreed; build is foundation-first.
+**Status:** shipped. All stages — source, impact (CVSS 3.1/4.0 + CWE), remediation, report, and PoC (downloadable draft) — run server-side. PoC *execution* was intentionally dropped: analysts run the PoC in their own target environment. The bundled-executor design below is retained for history but is no longer needed.
 
 ### What already exists to build on
 
@@ -658,9 +658,16 @@ constraints to resolve there:
       matched to the reference calculator) and drives `Finding.severity`; the
       4.0 score is model-estimated and labelled (a faithful 4.0 MacroVector
       calculator is a follow-up). Vectors + scores stored on the finding.
-- [ ] **PoC verification** (execution, built last, most careful) — draft-only by
-      default; opt-in auto-execution in a sandboxed executor workspace, network-
-      scoped via the `target=` authorisation, recording whether it reproduced.
+- [x] **PoC** — *landed as a downloadable draft; execution intentionally
+      dropped.* The model reads the source and writes a self-contained PoC with
+      the target as an argument/variable (never hardcoded); it's stored as an
+      encrypted `Attachment` on the finding and downloadable from the stage row
+      (case-scoped RBAC) and the finding's attachments. **No sandbox, no
+      executor, nothing runs** — the analyst takes the file to an environment
+      that can reach their target and runs it there. This is why the bundled
+      executor + its auth/toolchain unknowns are no longer needed at all: every
+      stage is server-side. (In-tool sandboxed execution remains a possible
+      future feature, but is explicitly out of scope.)
 
 - [ ] **Wizard step.** Where's your source (`SOURCE_ROOT` + a subdir) +
       default per-stage models + default execution mode.

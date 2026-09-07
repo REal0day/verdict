@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from .. import crypto, localsource, models, pipeline, schemas
@@ -60,6 +60,11 @@ def _stage_out(db: Session, run: models.StageRun) -> schemas.StageRunOut:
     out.finding_title = run.finding.title if run.finding else None
     out.has_output = run.output_enc is not None
     out.resolved = _resolved(db, run)
+    if run.artifact_id:
+        att = db.get(models.Attachment, run.artifact_id)
+        if att:
+            out.artifact_id = att.id
+            out.artifact_name = att.filename
     return out
 
 
@@ -398,3 +403,37 @@ def stage_output(
         raise HTTPException(404, "stage run not found")
     text = crypto.decrypt(run.output_enc).decode("utf-8", "replace") if run.output_enc else ""
     return {"id": run.id, "stage": run.stage.value, "status": run.status.value, "output": text}
+
+
+@router.get("/{case_id}/stages/{run_id}/artifact")
+def stage_artifact(
+    case_id: str,
+    run_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Download a stage's produced file (e.g. the PoC), under case RBAC.
+
+    Auth via Bearer or cookie so both the SPA's authenticated fetch and a
+    browser session work — same as the attachments download.
+    """
+    from fastapi.responses import Response
+    from ..main import _user_from_cookie
+    viewer = _user_from_cookie(request, db)
+    if not viewer:
+        raise HTTPException(401, "Not authenticated")
+    case = db.get(models.Case, case_id)
+    if not case:
+        raise HTTPException(404, "case not found")
+    assert_can_view_case(db, viewer, case)
+    run = db.get(models.StageRun, run_id)
+    if not run or run.case_id != case.id or not run.artifact_id:
+        raise HTTPException(404, "no artifact for this stage run")
+    att = db.get(models.Attachment, run.artifact_id)
+    if not att:
+        raise HTTPException(404, "artifact not found")
+    data = crypto.decrypt(att.content_enc)
+    return Response(
+        content=data, media_type=att.content_type or "application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{att.filename}"'},
+    )

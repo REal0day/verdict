@@ -153,7 +153,10 @@ def test_provider_error_is_a_friendly_stage_error(env, monkeypatch):
     assert "ANTHROPIC_API_KEY" not in run.error  # non-admin message
 
 
-def test_unimplemented_stage_errors_cleanly(env):
+def test_unregistered_stage_errors_cleanly(env, monkeypatch):
+    # Every stage is implemented now; verify the defensive path still holds if
+    # a runner is ever missing from the dispatch table.
+    monkeypatch.setitem(pipeline._RUNNERS, models.StageType.poc, None)
     run = _run(env, stage=models.StageType.poc)
     assert run.status == models.StageRunStatus.error
     assert "not implemented" in run.error
@@ -235,3 +238,37 @@ def test_report_stage_assembles_and_saves_a_report(env, monkeypatch):
     # a downloadable generated Report was created
     rpt = env.query(models.Report).filter_by(source_tool=models.SourceTool.generated).first()
     assert rpt is not None and crypto.decrypt(rpt.content_enc).decode().startswith("# Investigation report")
+
+
+def test_poc_stage_writes_a_downloadable_attachment(env, monkeypatch):
+    provider = FakeProvider([
+        AssistantTurn(tool_calls=[_tc("submit_poc",
+            filename="poc_upload_rce.py", language="python",
+            poc="import sys, requests\nTARGET = sys.argv[1]  # e.g. https://host\n"
+                "requests.post(TARGET + '/api/upload', files={'f': ('x.php', b'<?php ?>')})\n",
+            usage="python poc_upload_rce.py https://your-target")], stop_reason="tool_use"),
+    ])
+    monkeypatch.setattr(pipeline, "get_provider", lambda p, m: provider)
+    run = _run(env, stage=models.StageType.poc)
+    assert run.status == models.StageRunStatus.done
+
+    # an Attachment was created, linked to the run + finding, target NOT hardcoded
+    assert run.artifact_id
+    att = env.get(models.Attachment, run.artifact_id)
+    assert att and att.filename == "poc_upload_rce.py"
+    assert att.finding_id == env.finding.id and att.scan_id == env.case.scan_id
+    body = crypto.decrypt(att.content_enc).decode()
+    assert "sys.argv[1]" in body and "https://host" not in body.split("#")[0]
+    # the stage output shows the file + usage
+    out = crypto.decrypt(run.output_enc).decode()
+    assert "poc_upload_rce.py" in out and "your-target" in out
+
+
+def test_poc_stage_needs_actual_poc_content(env, monkeypatch):
+    provider = FakeProvider([
+        AssistantTurn(tool_calls=[_tc("submit_poc", filename="x.py", poc="")], stop_reason="tool_use"),
+    ])
+    monkeypatch.setattr(pipeline, "get_provider", lambda p, m: provider)
+    run = _run(env, stage=models.StageType.poc)
+    assert run.status == models.StageRunStatus.error
+    assert run.artifact_id is None

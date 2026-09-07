@@ -250,6 +250,10 @@ def _ensure_onboarding_column():
         conn.execute(text(
             "ALTER TABLE findings ADD COLUMN IF NOT EXISTS cvss40_score DOUBLE PRECISION"
         ))
+        # StageRun: downloadable artefact (PoC file) produced by a run.
+        conn.execute(text(
+            "ALTER TABLE stage_runs ADD COLUMN IF NOT EXISTS artifact_id VARCHAR(36)"
+        ))
 
     # ALTER TYPE … ADD VALUE can't run inside a transaction; needs its
     # own AUTOCOMMIT connection. Run it after the main DDL block above.
