@@ -237,6 +237,19 @@ def _ensure_onboarding_column():
         conn.execute(text(
             "ALTER TABLE remote_sessions ADD COLUMN IF NOT EXISTS cli VARCHAR(32)"
         ))
+        # Findings: CVSS from the Investigations impact stage.
+        conn.execute(text(
+            "ALTER TABLE findings ADD COLUMN IF NOT EXISTS cvss31_vector VARCHAR(128) NOT NULL DEFAULT ''"
+        ))
+        conn.execute(text(
+            "ALTER TABLE findings ADD COLUMN IF NOT EXISTS cvss31_score DOUBLE PRECISION"
+        ))
+        conn.execute(text(
+            "ALTER TABLE findings ADD COLUMN IF NOT EXISTS cvss40_vector VARCHAR(160) NOT NULL DEFAULT ''"
+        ))
+        conn.execute(text(
+            "ALTER TABLE findings ADD COLUMN IF NOT EXISTS cvss40_score DOUBLE PRECISION"
+        ))
 
     # ALTER TYPE … ADD VALUE can't run inside a transaction; needs its
     # own AUTOCOMMIT connection. Run it after the main DDL block above.

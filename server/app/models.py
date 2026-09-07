@@ -3,7 +3,7 @@ import uuid
 import datetime as dt
 
 from sqlalchemy import (
-    String, ForeignKey, DateTime, LargeBinary, Integer, BigInteger, Text, Enum,
+    String, ForeignKey, DateTime, LargeBinary, Integer, BigInteger, Text, Enum, Float,
     UniqueConstraint, Boolean, Date, JSON,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -409,6 +409,13 @@ class Finding(Base):
     # Free-form tag list (SBP / SS / VULN, lowercased). Stored as JSON so
     # we can add new tag values without an enum migration.
     tags: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+
+    # CVSS, set by the Investigations impact stage. 3.1 score is computed
+    # server-side from the vector; 4.0 score is model-estimated (see cvss.py).
+    cvss31_vector: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    cvss31_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cvss40_vector: Mapped[str] = mapped_column(String(160), default="", nullable=False)
+    cvss40_score: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[dt.datetime] = mapped_column(

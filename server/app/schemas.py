@@ -357,6 +357,10 @@ class FindingOut(FindingBase):
     triaged_at: dt.datetime | None = None
     created_at: dt.datetime
     updated_at: dt.datetime
+    cvss31_vector: str = ""
+    cvss31_score: float | None = None
+    cvss40_vector: str = ""
+    cvss40_score: float | None = None
 
     class Config:
         from_attributes = True

@@ -646,13 +646,18 @@ constraints to resolve there:
       **the server reads the source directly** (reading is safe; only *running*
       code needs the executor). The bundled executor + its auth/toolchain
       unknowns now belong solely to **PoC verification** below.
-- [ ] **Remediation** — proposes a fix grounded in the source-investigation
-      output; populates `Finding.remediation`.
-- [ ] **Report** — assembles impact + PoC + source + remediation into a
-      structured report, saved as a `generated` Report (reuses the existing
-      chat/analytics "save as report" path).
-- [ ] **Impact assessment** — severity + blast-radius reasoning over the bug
-      report and source context; populates `severity` and the impact narrative.
+- [x] **Remediation** — *landed.* Tool-use loop grounded in the source
+      investigation; writes `Finding.remediation` (non-destructively) and stores
+      the fix + optional patch + references as the stage output.
+- [x] **Report** — *landed.* Case-level stage: assembles every finding's
+      impact / source / remediation stage outputs into one Markdown report and
+      saves it as a `generated` Report (downloadable from Reports).
+- [x] **Impact assessment** — *landed.* Scores the finding with **CVSS 3.1
+      and 4.0** vectors + a one-sentence rationale per metric + a CWE. The 3.1
+      base score is **computed server-side from the vector** (`app/cvss.py`,
+      matched to the reference calculator) and drives `Finding.severity`; the
+      4.0 score is model-estimated and labelled (a faithful 4.0 MacroVector
+      calculator is a follow-up). Vectors + scores stored on the finding.
 - [ ] **PoC verification** (execution, built last, most careful) — draft-only by
       default; opt-in auto-execution in a sandboxed executor workspace, network-
       scoped via the `target=` authorisation, recording whether it reproduced.

@@ -47,6 +47,9 @@ class FakeProvider:
     def start_tools(self, system, tools, max_tokens=None):
         self.convo = FakeConvo(self._turns)
         return self.convo
+    def chat(self, system, messages, max_tokens=None):
+        self.chat_context = messages[-1]["content"]
+        return getattr(self, "chat_reply", "# Report\n\nAssembled write-up.")
 
 
 def _tc(name, **args):
@@ -151,7 +154,7 @@ def test_provider_error_is_a_friendly_stage_error(env, monkeypatch):
 
 
 def test_unimplemented_stage_errors_cleanly(env):
-    run = _run(env, stage=models.StageType.impact)
+    run = _run(env, stage=models.StageType.poc)
     assert run.status == models.StageRunStatus.error
     assert "not implemented" in run.error
 
@@ -171,3 +174,64 @@ def test_lifecycle_timestamps_are_set(env, monkeypatch):
     monkeypatch.setattr(pipeline, "get_provider", lambda p, m: provider)
     run = _run(env)
     assert run.started_at is not None and run.completed_at is not None
+
+
+def test_impact_stage_computes_cvss31_and_updates_finding(env, monkeypatch):
+    provider = FakeProvider([
+        AssistantTurn(tool_calls=[_tc("submit_impact",
+            cvss31_vector="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+            cvss40_vector="CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+            cvss40_score=9.3, cwe="CWE-434",
+            cvss31_rationale=[{"metric": "AV", "value": "N", "reason": "reachable over the network."}],
+            summary="Unauthenticated RCE via arbitrary upload.")], stop_reason="tool_use"),
+    ])
+    monkeypatch.setattr(pipeline, "get_provider", lambda p, m: provider)
+    run = _run(env, stage=models.StageType.impact)
+    assert run.status == models.StageRunStatus.done
+    env.refresh(env.finding)
+    assert env.finding.cvss31_score == 9.8           # computed server-side
+    assert env.finding.severity == models.Severity.critical
+    assert env.finding.cwe == "CWE-434"
+    assert env.finding.cvss40_vector.startswith("CVSS:4.0/")
+    out = crypto.decrypt(run.output_enc).decode()
+    assert "9.8" in out and "computed" in out and "model-estimated" in out
+
+
+def test_impact_rejects_a_bad_cvss31_vector_gracefully(env, monkeypatch):
+    provider = FakeProvider([
+        AssistantTurn(tool_calls=[_tc("submit_impact",
+            cvss31_vector="CVSS:3.1/AV:N/AC:L", cwe="CWE-434",
+            summary="incomplete vector")], stop_reason="tool_use"),
+    ])
+    monkeypatch.setattr(pipeline, "get_provider", lambda p, m: provider)
+    run = _run(env, stage=models.StageType.impact)
+    assert run.status == models.StageRunStatus.done  # stage still completes
+    env.refresh(env.finding)
+    assert env.finding.cvss31_score is None          # nothing bogus persisted
+    assert "could not compute" in crypto.decrypt(run.output_enc).decode()
+
+
+def test_remediation_stage_sets_finding_remediation(env, monkeypatch):
+    provider = FakeProvider([
+        AssistantTurn(tool_calls=[_tc("submit_remediation",
+            summary="Validate the content-type and store outside the webroot (api/upload.py:2).",
+            references=["https://owasp.org/upload"])], stop_reason="tool_use"),
+    ])
+    monkeypatch.setattr(pipeline, "get_provider", lambda p, m: provider)
+    run = _run(env, stage=models.StageType.remediation)
+    assert run.status == models.StageRunStatus.done
+    env.refresh(env.finding)
+    assert "content-type" in env.finding.remediation
+    assert "owasp.org" in crypto.decrypt(run.output_enc).decode()
+
+
+def test_report_stage_assembles_and_saves_a_report(env, monkeypatch):
+    provider = FakeProvider([])
+    provider.chat_reply = "# Investigation report\n\nExecutive summary: one critical RCE."
+    monkeypatch.setattr(pipeline, "get_provider", lambda p, m: provider)
+    run = _run(env, stage=models.StageType.report, finding=False)  # case-level
+    assert run.status == models.StageRunStatus.done
+    assert "Executive summary" in crypto.decrypt(run.output_enc).decode()
+    # a downloadable generated Report was created
+    rpt = env.query(models.Report).filter_by(source_tool=models.SourceTool.generated).first()
+    assert rpt is not None and crypto.decrypt(rpt.content_enc).decode().startswith("# Investigation report")
