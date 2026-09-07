@@ -136,21 +136,37 @@ function ProviderCard({ p }: { p: Provider }) {
   const [model, setModel] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [saved, setSaved] = useState(false);
+  const [testResult, setTestResult] = useState<TestResult | null>(null);
+
+  function body() {
+    return {
+      provider: p.name,
+      ...(key ? { api_key: key } : {}),
+      ...(model ? { model } : {}),
+      ...(baseUrl ? { base_url: baseUrl } : {}),
+    };
+  }
 
   const save = useMutation({
-    mutationFn: () =>
-      api<AISettings>("/settings/ai", {
-        method: "PUT",
-        body: {
-          provider: p.name,
-          ...(key ? { api_key: key } : {}),
-          ...(model ? { model } : {}),
-          ...(baseUrl ? { base_url: baseUrl } : {}),
-        },
-      }),
+    mutationFn: () => api<AISettings>("/settings/ai", { method: "PUT", body: body() }),
     onSuccess: () => {
       setKey(""); setModel(""); setBaseUrl(""); setSaved(true);
       qc.invalidateQueries({ queryKey: ["ai-settings"] });
+    },
+  });
+
+  // Save the entered values first, then probe the provider so "test" reflects
+  // exactly what you typed — not the previously-saved config.
+  const saveTest = useMutation({
+    mutationFn: async () => {
+      await api("/settings/ai", { method: "PUT", body: body() });
+      return api<TestResult>("/settings/ai/test", { method: "POST", body: { provider: p.name } });
+    },
+    onSuccess: (r) => {
+      setTestResult(r); setSaved(true);
+      setKey(""); setModel(""); setBaseUrl("");
+      qc.invalidateQueries({ queryKey: ["ai-settings"] });
+      qc.invalidateQueries({ queryKey: ["ai-status"] });
     },
   });
 
@@ -232,11 +248,17 @@ function ProviderCard({ p }: { p: Provider }) {
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Button type="submit" disabled={save.isPending}>
               <KeyRound size={14} /> {save.isPending ? "Saving…" : "Save"}
             </Button>
-            {saved ? (
+            <Button type="button" variant="secondary"
+                    disabled={saveTest.isPending}
+                    onClick={() => { setTestResult(null); saveTest.mutate(); }}>
+              {saveTest.isPending ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+              {saveTest.isPending ? "Testing…" : "Save & test"}
+            </Button>
+            {saved && !saveTest.isPending ? (
               <span className="text-xs text-success inline-flex items-center gap-1">
                 <Check size={12} /> Saved
               </span>
@@ -245,6 +267,19 @@ function ProviderCard({ p }: { p: Provider }) {
         </form>
         {save.isError ? (
           <p className="text-sm text-danger">{aiErrorText(save.error, "Couldn't save.")}</p>
+        ) : null}
+        {testResult ? (
+          testResult.ok ? (
+            <p className="text-sm text-success inline-flex items-center gap-1">
+              <Check size={13} /> Works — {p.display_name} answered
+              {testResult.model ? ` using ${testResult.model}` : ""}.
+            </p>
+          ) : (
+            <p className="text-sm text-danger inline-flex items-start gap-1">
+              <AlertCircle size={13} className="mt-0.5 shrink-0" />
+              <span>{testResult.error || "Test failed."}</span>
+            </p>
+          )
         ) : null}
       </CardBody>
     </Card>
@@ -255,20 +290,24 @@ function ProviderCard({ p }: { p: Provider }) {
 function LocalModelCard() {
   const qc = useQueryClient();
   const [found, setFound] = useState<LocalCandidate[] | null>(null);
+  const [testResult, setTestResult] = useState<TestResult | null>(null);
 
   const discover = useMutation({
     mutationFn: () => api<LocalCandidate[]>("/settings/ai/local/discover"),
     onSuccess: (r) => setFound(r),
   });
 
+  // Point the server at the picked model, make it active, then probe it — so a
+  // click means "this model actually answered".
   const use = useMutation({
-    mutationFn: (v: { base_url: string; model: string }) =>
-      api<AISettings>("/settings/ai", {
-        method: "PUT",
-        body: { provider: "local", base_url: v.base_url, model: v.model },
-      }),
-    onSuccess: async () => {
+    mutationFn: async (v: { base_url: string; model: string }) => {
+      await api("/settings/ai", { method: "PUT",
+        body: { provider: "local", base_url: v.base_url, model: v.model } });
       await api("/settings/ai/active", { method: "PUT", body: { provider: "local" } });
+      return api<TestResult>("/settings/ai/test", { method: "POST", body: { provider: "local" } });
+    },
+    onSuccess: (r) => {
+      setTestResult(r);
       qc.invalidateQueries({ queryKey: ["ai-settings"] });
       qc.invalidateQueries({ queryKey: ["ai-status"] });
     },
@@ -326,6 +365,18 @@ function LocalModelCard() {
         ))}
         {use.isError ? (
           <p className="text-sm text-danger">{aiErrorText(use.error, "Couldn't select that model.")}</p>
+        ) : null}
+        {testResult ? (
+          testResult.ok ? (
+            <p className="text-sm text-success inline-flex items-center gap-1">
+              <Check size={13} /> Connected — answered using {testResult.model}.
+            </p>
+          ) : (
+            <p className="text-sm text-danger inline-flex items-start gap-1">
+              <AlertCircle size={13} className="mt-0.5 shrink-0" />
+              <span>Selected, but the test call failed: {testResult.error}</span>
+            </p>
+          )
         ) : null}
       </CardBody>
     </Card>
