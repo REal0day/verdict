@@ -631,6 +631,14 @@ constraints to resolve there:
 
 ### Wiring the stages (safest first, after the foundation)
 
+- [x] **Discover** (case-level, source scan → findings table) — *landed.* The
+      primary entry point: attach source, click **Discover vulns**, and the
+      model reads the report (as notes) + scans the whole source tree and
+      creates a `Finding` per vulnerability it identifies — filling the findings
+      table. No pre-existing finding required. The per-finding stages below then
+      run on each discovered finding. This replaced the awkward "hand-create a
+      finding before you can investigate" flow.
+
 - [x] **Source investigation** (read-only) — *landed.* Because it only reads
       files (never runs code), it runs as a **server-side provider tool-use
       loop** over the read-only `SOURCE_ROOT` mount — no executor, no auth

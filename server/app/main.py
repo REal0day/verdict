@@ -265,6 +265,13 @@ def _ensure_onboarding_column():
                 )
             except Exception as e:
                 log.warning("ALTER TYPE notificationkind ADD VALUE %r failed: %s", v, e)
+        # StageType gained 'discover' (source-scan stage that lists findings).
+        try:
+            conn.exec_driver_sql(
+                "ALTER TYPE stagetype ADD VALUE IF NOT EXISTS 'discover'"
+            )
+        except Exception as e:
+            log.warning("ALTER TYPE stagetype ADD VALUE 'discover' failed: %s", e)
 
 
 def _bootstrap_admin():

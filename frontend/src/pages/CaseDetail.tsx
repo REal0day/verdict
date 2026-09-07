@@ -12,7 +12,7 @@ import { statusBadge, type CaseOut } from "./Cases";
 import { downloadFile } from "@/lib/download";
 import {
   ArrowLeft, FolderGit2, HardDrive, Upload, FolderTree, Check, AlertCircle,
-  Play, Trash2, ListChecks, FileText, RotateCw, ChevronDown, ChevronRight, Loader2, Download, Plus,
+  Play, Trash2, ListChecks, FileText, RotateCw, ChevronDown, ChevronRight, Loader2, Download, Plus, ScanSearch,
 } from "lucide-react";
 
 type ResolvedModel = { provider: string | null; model: string | null; source: string };
@@ -36,7 +36,7 @@ type CaseDetailT = CaseOut & {
   findings: FindingRow[]; stage_runs: StageRun[];
 };
 
-const STAGES = ["impact", "source", "poc", "remediation", "report"] as const;
+const STAGES = ["discover", "source", "impact", "remediation", "poc", "report"] as const;
 const STAGE_STATUS_TONE: Record<string, "muted" | "primary" | "success" | "danger" | "default"> = {
   pending: "muted", running: "primary", done: "success", error: "danger", skipped: "default",
 };
@@ -100,7 +100,8 @@ export function CaseDetail() {
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2 space-y-6">
-          <FindingsCard findings={c.findings} scanId={c.scan_id}
+          <FindingsCard findings={c.findings} scanId={c.scan_id} caseId={c.id}
+                        sourceReady={c.source?.status === "ready"}
                         caseTitle={c.title} onChange={refresh} />
           <StagesCard c={c} onChange={refresh} />
         </div>
@@ -261,8 +262,9 @@ function UploadInfo({ caseId, projectId, onChange }: {
 
 /* ---------------------------------------------------------------- findings */
 
-function FindingsCard({ findings, scanId, caseTitle, onChange }: {
-  findings: FindingRow[]; scanId: string | null; caseTitle: string; onChange: () => void;
+function FindingsCard({ findings, scanId, caseId, sourceReady, caseTitle, onChange }: {
+  findings: FindingRow[]; scanId: string | null; caseId: string;
+  sourceReady: boolean; caseTitle: string; onChange: () => void;
 }) {
   const [adding, setAdding] = useState(false);
   const [title, setTitle] = useState("");
@@ -275,11 +277,22 @@ function FindingsCard({ findings, scanId, caseTitle, onChange }: {
     onSuccess: () => { setAdding(false); setTitle(""); setSeverity("unknown"); onChange(); },
   });
 
+  // Discover: scan the source and let the model populate the findings table.
+  const discover = useMutation({
+    mutationFn: () => api(`/cases/${caseId}/stages`, { method: "POST", body: { stage: "discover" } }),
+    onSuccess: onChange,
+  });
+
   return (
     <Card>
       <CardHeader className="flex items-center justify-between">
         <CardTitle>Findings ({findings.length})</CardTitle>
         <div className="flex items-center gap-3">
+          <Button size="sm" onClick={() => discover.mutate()}
+                  disabled={discover.isPending || !sourceReady}
+                  title={sourceReady ? "Scan the source and list vulnerabilities" : "Attach a source first"}>
+            <ScanSearch size={13} /> {discover.isPending ? "Scanning…" : "Discover vulns"}
+          </Button>
           {scanId ? (
             <Button size="sm" variant="secondary" onClick={() => { setAdding((v) => !v); setTitle(caseTitle || ""); }}>
               <Plus size={13} /> Add finding
@@ -311,11 +324,14 @@ function FindingsCard({ findings, scanId, caseTitle, onChange }: {
           </div>
         ) : null}
         {findings.length === 0 ? (
-          <p className="text-sm text-fgmuted">
-            No findings yet — a case usually has one per reported vulnerability.
-            Click <strong>Add finding</strong> to create one from the bug report, then
-            run the pipeline stages on it.
-          </p>
+          <div className="text-sm text-fgmuted space-y-1">
+            <p>No findings yet.</p>
+            <p>
+              {sourceReady
+                ? <>Click <strong>Discover vulns</strong> to scan the attached source — the model reads the code (and your report) and fills this table. Or <strong>Add finding</strong> to enter one by hand.</>
+                : <>Attach a source in the panel on the right, then <strong>Discover vulns</strong> scans it and lists what it finds here.</>}
+            </p>
+          </div>
         ) : (
           <Table>
             <THead><TR><TH>Title</TH><TH>Severity</TH><TH>CWE</TH><TH>Component</TH></TR></THead>
@@ -345,12 +361,12 @@ function FindingsCard({ findings, scanId, caseTitle, onChange }: {
 function StagesCard({ c, onChange }: { c: CaseDetailT; onChange: () => void }) {
   const [stage, setStage] = useState<string>("report");
   const [findingId, setFindingId] = useState<string>("");
-  const isReport = stage === "report";
+  const isCaseLevel = stage === "report" || stage === "discover";
 
   const queue = useMutation({
     mutationFn: () => api<StageRun>(`/cases/${c.id}/stages`, {
       method: "POST",
-      body: { stage, finding_id: isReport ? null : (findingId || null) },
+      body: { stage, finding_id: isCaseLevel ? null : (findingId || null) },
     }),
     onSuccess: onChange,
   });
@@ -369,7 +385,7 @@ function StagesCard({ c, onChange }: { c: CaseDetailT; onChange: () => void }) {
               {STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
             </Select>
           </div>
-          {!isReport ? (
+          {!isCaseLevel ? (
             <div className="min-w-[12rem]">
               <Label htmlFor="fi">Finding</Label>
               <Select id="fi" value={findingId} onChange={(e) => setFindingId(e.target.value)} className="text-sm">
@@ -379,7 +395,7 @@ function StagesCard({ c, onChange }: { c: CaseDetailT; onChange: () => void }) {
             </div>
           ) : null}
           <Button type="button" size="sm" onClick={() => queue.mutate()}
-                  disabled={queue.isPending || (!isReport && !findingId)}>
+                  disabled={queue.isPending || (!isCaseLevel && !findingId)}>
             <Play size={13} /> Queue
           </Button>
           <span className="text-[11px] text-fgmuted">runs on the executor; drains over time.</span>

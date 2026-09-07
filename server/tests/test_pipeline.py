@@ -272,3 +272,49 @@ def test_poc_stage_needs_actual_poc_content(env, monkeypatch):
     run = _run(env, stage=models.StageType.poc)
     assert run.status == models.StageRunStatus.error
     assert run.artifact_id is None
+
+
+def test_discover_stage_populates_the_findings_table(env, monkeypatch):
+    fresh = models.VulnScan(user_id=env.case.user_id, product="P2", state=models.ScanState.draft)
+    env.add(fresh); env.flush()
+    case2 = models.Case(user_id=env.case.user_id, scan_id=fresh.id, title="scan me",
+                        report_enc=crypto.encrypt(b"look for auth + injection bugs"))
+    env.add(case2); env.flush()
+    src = models.CaseSource(case_id=case2.id, kind=models.CaseSourceKind.local_path,
+                            status=models.SourceStatus.ready, workspace_key=str(env.tmp))
+    env.add(src); env.commit()
+
+    provider = FakeProvider([
+        AssistantTurn(tool_calls=[_tc("submit_findings", findings=[
+            {"title": "Unrestricted file upload", "severity": "critical", "cwe": "CWE-434",
+             "affected_component": "api/upload.py", "description": "no validation"},
+            {"title": "Missing authz check", "severity": "high", "affected_component": "api/upload.py"},
+        ])], stop_reason="tool_use"),
+    ])
+    monkeypatch.setattr(pipeline, "get_provider", lambda p, m: provider)
+
+    run = models.StageRun(case_id=case2.id, finding_id=None, stage=models.StageType.discover)
+    env.add(run); env.commit()
+    pipeline.run_stage(env, run); env.refresh(run)
+
+    assert run.status == models.StageRunStatus.done
+    findings = env.query(models.Finding).filter_by(scan_id=fresh.id).all()
+    assert len(findings) == 2
+    titles = {f.title for f in findings}
+    assert "Unrestricted file upload" in titles and "Missing authz check" in titles
+    crit = next(f for f in findings if f.title == "Unrestricted file upload")
+    assert crit.severity == models.Severity.critical and crit.cwe == "CWE-434"
+    out = crypto.decrypt(run.output_enc).decode()
+    assert "Title" in out and "Unrestricted file upload" in out
+
+
+def test_discover_handles_no_findings(env, monkeypatch):
+    provider = FakeProvider([
+        AssistantTurn(tool_calls=[_tc("submit_findings", findings=[])], stop_reason="tool_use"),
+    ])
+    monkeypatch.setattr(pipeline, "get_provider", lambda p, m: provider)
+    run = models.StageRun(case_id=env.case.id, finding_id=None, stage=models.StageType.discover)
+    env.add(run); env.commit()
+    pipeline.run_stage(env, run); env.refresh(run)
+    assert run.status == models.StageRunStatus.done
+    assert "No vulnerabilities identified" in crypto.decrypt(run.output_enc).decode()

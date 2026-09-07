@@ -970,6 +970,7 @@ class SourceStatus(str, enum.Enum):
 
 
 class StageType(str, enum.Enum):
+    discover = "discover"            # scan the source, list vulnerabilities as findings
     impact = "impact"                # severity / blast-radius reasoning
     poc = "poc"                      # write (+ optionally run) a PoC
     source = "source"                # read the source to understand the bug

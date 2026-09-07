@@ -590,6 +590,98 @@ def _run_report_stage(db, run) -> str:
     return text
 
 
+# ------------------------------------------------------------ discover stage
+
+_DISCOVER_SYSTEM = (
+    "You are a senior application-security engineer triaging a case. You are "
+    "given an inbound bug report (which may describe one or more issues, or may "
+    "just be context) and read-only access to the product's source tree. Your "
+    "job: identify the real, concrete vulnerabilities. Include every issue the "
+    "report describes AND any additional vulnerabilities you find by reading the "
+    "source. Ground each in the code — do not invent issues the code does not "
+    "support. When done, call submit_findings ONCE with the full list. If you "
+    "genuinely find nothing, submit an empty list."
+)
+
+_DISCOVER_TOOL = ToolSpec(
+    name="submit_findings",
+    description="Submit the list of vulnerabilities found. Call exactly once.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "findings": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "description": "Short, specific title."},
+                        "severity": {"type": "string", "enum": ["critical","high","medium","low","info","unknown"]},
+                        "cwe": {"type": "string", "description": "e.g. CWE-1321 (optional)."},
+                        "affected_component": {"type": "string", "description": "file/module, e.g. 'index.js'."},
+                        "description": {"type": "string", "description": "What it is and why it's exploitable, cite file:line."},
+                    },
+                    "required": ["title"],
+                },
+            },
+        },
+        "required": ["findings"],
+    },
+)
+
+_MAX_DISCOVERED = 50
+
+
+def _run_discover_stage(db, run) -> str:
+    case = db.get(models.Case, run.case_id)
+    if case.scan_id is None:
+        raise RuntimeError("case has no scan to attach findings to")
+    provider = _provider(db, run)
+
+    report = crypto.decrypt(case.report_enc).decode("utf-8", "replace") if case.report_enc else ""
+    user = (
+        f"# Inbound bug report / notes\n\n{report or '(none provided)'}\n\n"
+        "Read the source tree, identify the vulnerabilities, and call "
+        "submit_findings with the complete list."
+    )
+
+    args, text = _run_read_tool_loop(db, run, provider, _DISCOVER_SYSTEM,
+                                     [_DISCOVER_TOOL], user, "submit_findings")
+    if args is None:
+        raise RuntimeError("the model finished without submitting findings")
+
+    items = args.get("findings") or []
+    created = 0
+    rows = []
+    for it in items[:_MAX_DISCOVERED]:
+        title = (it.get("title") or "").strip()
+        if not title:
+            continue
+        sev_raw = (it.get("severity") or "unknown").strip().lower()
+        try:
+            sev = models.Severity(sev_raw)
+        except ValueError:
+            sev = models.Severity.unknown
+        f = models.Finding(
+            scan_id=case.scan_id, user_id=case.user_id,
+            title=title[:512], severity=sev,
+            cwe=(it.get("cwe") or "").strip()[:64],
+            affected_component=(it.get("affected_component") or "").strip()[:512],
+            description=(it.get("description") or "").strip(),
+        )
+        db.add(f)
+        created += 1
+        rows.append((title, sev.value, it.get("cwe") or "-", it.get("affected_component") or "-"))
+
+    parts = [f"# Discovery — {created} finding(s)", ""]
+    if created:
+        parts += ["| # | Title | Severity | CWE | Component |", "|---|---|---|---|---|"]
+        for i, (t, sv, cwe, comp) in enumerate(rows, 1):
+            parts.append(f"| {i} | {t} | {sv} | {cwe} | {comp} |")
+    else:
+        parts.append("No vulnerabilities identified from the report and source.")
+    return "\n".join(parts).strip()
+
+
 # ----------------------------------------------------------------- poc stage
 
 _POC_SYSTEM = (
@@ -681,6 +773,7 @@ _RUNNERS = {
     models.StageType.remediation: _run_remediation_stage,
     models.StageType.report: _run_report_stage,
     models.StageType.poc: _run_poc_stage,
+    models.StageType.discover: _run_discover_stage,
 }
 
 
