@@ -12,7 +12,7 @@ import { statusBadge, type CaseOut } from "./Cases";
 import { downloadFile } from "@/lib/download";
 import {
   ArrowLeft, FolderGit2, HardDrive, Upload, FolderTree, Check, AlertCircle,
-  Play, Trash2, ListChecks, FileText, RotateCw, ChevronDown, ChevronRight, Loader2, Download,
+  Play, Trash2, ListChecks, FileText, RotateCw, ChevronDown, ChevronRight, Loader2, Download, Plus,
 } from "lucide-react";
 
 type ResolvedModel = { provider: string | null; model: string | null; source: string };
@@ -100,7 +100,8 @@ export function CaseDetail() {
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2 space-y-6">
-          <FindingsCard findings={c.findings} scanId={c.scan_id} />
+          <FindingsCard findings={c.findings} scanId={c.scan_id}
+                        caseTitle={c.title} onChange={refresh} />
           <StagesCard c={c} onChange={refresh} />
         </div>
         <div className="space-y-6">
@@ -260,19 +261,60 @@ function UploadInfo({ caseId, projectId, onChange }: {
 
 /* ---------------------------------------------------------------- findings */
 
-function FindingsCard({ findings, scanId }: { findings: FindingRow[]; scanId: string | null }) {
+function FindingsCard({ findings, scanId, caseTitle, onChange }: {
+  findings: FindingRow[]; scanId: string | null; caseTitle: string; onChange: () => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [title, setTitle] = useState("");
+  const [severity, setSeverity] = useState("unknown");
+
+  const add = useMutation({
+    mutationFn: () => api(`/scans/${scanId}/findings`, {
+      method: "POST", body: { title: title.trim() || caseTitle || "Untitled finding", severity },
+    }),
+    onSuccess: () => { setAdding(false); setTitle(""); setSeverity("unknown"); onChange(); },
+  });
+
   return (
     <Card>
       <CardHeader className="flex items-center justify-between">
         <CardTitle>Findings ({findings.length})</CardTitle>
-        {scanId ? (
-          <Link to={`/scans/${scanId}`} className="text-xs text-primary hover:underline">open scan</Link>
-        ) : null}
+        <div className="flex items-center gap-3">
+          {scanId ? (
+            <Button size="sm" variant="secondary" onClick={() => { setAdding((v) => !v); setTitle(caseTitle || ""); }}>
+              <Plus size={13} /> Add finding
+            </Button>
+          ) : null}
+          {scanId ? (
+            <Link to={`/scans/${scanId}`} className="text-xs text-primary hover:underline">open scan</Link>
+          ) : null}
+        </div>
       </CardHeader>
       <CardBody>
+        {adding ? (
+          <div className="flex flex-wrap items-end gap-2 mb-4 border-b border-border pb-4">
+            <div className="flex-1 min-w-[14rem]">
+              <Label htmlFor="ft">Finding title</Label>
+              <Input id="ft" value={title} onChange={(e) => setTitle(e.target.value)}
+                     placeholder="e.g. Prototype pollution in setKey" autoFocus />
+            </div>
+            <div>
+              <Label htmlFor="fs">Severity</Label>
+              <Select id="fs" value={severity} onChange={(e) => setSeverity(e.target.value)}>
+                {["unknown","info","low","medium","high","critical"].map((v) =>
+                  <option key={v} value={v}>{v}</option>)}
+              </Select>
+            </div>
+            <Button size="sm" onClick={() => add.mutate()} disabled={add.isPending}>
+              {add.isPending ? "Adding…" : "Add"}
+            </Button>
+          </div>
+        ) : null}
         {findings.length === 0 ? (
           <p className="text-sm text-fgmuted">
-            No findings yet. They arrive from an import, an extracted report, or the pipeline.
+            No findings yet — a case usually has one per reported vulnerability.
+            Click <strong>Add finding</strong> to create one from the bug report, then
+            run the pipeline stages on it.
           </p>
         ) : (
           <Table>

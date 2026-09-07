@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/Button";
 import { Input, Label, Select, Textarea } from "@/components/ui/Input";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Empty } from "@/components/ui/Empty";
-import { Microscope, Plus, X, FolderGit2, ListChecks } from "lucide-react";
+import { Microscope, Plus, X, FolderGit2, ListChecks, Upload } from "lucide-react";
 
 export type CaseOut = {
   id: string; user_id: string; project_id: string | null; project_name: string | null;
@@ -106,7 +106,31 @@ function NewCaseForm({ onCreated }: { onCreated: (id: string) => void }) {
   const [title, setTitle] = useState("");
   const [projectId, setProjectId] = useState("");
   const [reportText, setReportText] = useState("");
+  const [fileName, setFileName] = useState("");
+  const [fileErr, setFileErr] = useState("");
   const projects = useQuery({ queryKey: ["projects"], queryFn: () => api<Project[]>("/projects") });
+
+  function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    e.target.value = "";  // allow re-picking the same file
+    if (!f) return;
+    setFileErr("");
+    if (f.size > 2 * 1024 * 1024) { setFileErr("File is larger than 2 MB."); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = String(reader.result ?? "");
+      // Guard against binary the reader turned into replacement chars.
+      if (text.includes("\uFFFD")) {
+        setFileErr("That looks like a binary file. Upload a text/markdown report, or paste the text.");
+        return;
+      }
+      setReportText(text);
+      setFileName(f.name);
+      if (!title.trim()) setTitle(f.name.replace(/\.[^.]+$/, ""));
+    };
+    reader.onerror = () => setFileErr("Couldn't read that file.");
+    reader.readAsText(f);
+  }
 
   const create = useMutation({
     mutationFn: () =>
@@ -148,9 +172,21 @@ function NewCaseForm({ onCreated }: { onCreated: (id: string) => void }) {
             </div>
           </div>
           <div>
-            <Label htmlFor="r">Bug report <span className="opacity-60">(optional; stored encrypted)</span></Label>
-            <Textarea id="r" rows={5} value={reportText} onChange={(e) => setReportText(e.target.value)}
-                      placeholder="Paste the inbound bug report…" />
+            <div className="flex items-center justify-between">
+              <Label htmlFor="r">Bug report <span className="opacity-60">(optional; stored encrypted)</span></Label>
+              <label className="text-xs text-primary hover:underline cursor-pointer inline-flex items-center gap-1">
+                <Upload size={12} /> Upload a file
+                <input type="file" className="hidden"
+                       accept=".md,.txt,.log,.json,.csv,.yaml,.yml,.html,.eml,text/*"
+                       onChange={onPickFile} />
+              </label>
+            </div>
+            {fileName ? (
+              <p className="text-[11px] text-fgmuted mb-1">Loaded <code>{fileName}</code> — edit below if needed.</p>
+            ) : null}
+            {fileErr ? <p className="text-[11px] text-danger mb-1">{fileErr}</p> : null}
+            <Textarea id="r" rows={6} value={reportText} onChange={(e) => setReportText(e.target.value)}
+                      placeholder="Paste the inbound bug report, or upload a text/markdown file…" />
           </div>
           <div className="flex items-center gap-2">
             <Button type="submit" disabled={create.isPending || !title.trim()}>
