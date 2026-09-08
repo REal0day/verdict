@@ -160,15 +160,22 @@ function SourceCard({ c, onChange }: { c: CaseDetailT; onChange: () => void }) {
           ))}
         </div>
 
-        {mode === "local_path" ? <LocalPicker caseId={c.id} onChange={onChange} />
+        {mode === "local_path" ? (
+          <LocalPicker caseId={c.id} onChange={onChange}
+            currentPath={src?.kind === "local_path" ? src.local_path : ""}
+            currentStatus={src?.kind === "local_path" ? src.status : ""} />
+        )
           : <UploadInfo caseId={c.id} projectId={c.project_id} onChange={onChange} />}
       </CardBody>
     </Card>
   );
 }
 
-function LocalPicker({ caseId, onChange }: { caseId: string; onChange: () => void }) {
+function LocalPicker({ caseId, onChange, currentPath, currentStatus }: {
+  caseId: string; onChange: () => void; currentPath: string; currentStatus: string;
+}) {
   const [path, setPath] = useState("");
+  const [justAttached, setJustAttached] = useState("");
   const browse = useQuery({
     queryKey: ["source-browse", path],
     queryFn: () => api<{ available: boolean; path: string; dirs: string[] }>(
@@ -180,7 +187,7 @@ function LocalPicker({ caseId, onChange }: { caseId: string; onChange: () => voi
     mutationFn: (p: string) => api(`/cases/${caseId}/source`, {
       method: "PUT", body: { kind: "local_path", local_path: p },
     }),
-    onSuccess: onChange,
+    onSuccess: (_r, p) => { setJustAttached(p); onChange(); },
   });
 
   const data = browse.data;
@@ -194,8 +201,21 @@ function LocalPicker({ caseId, onChange }: { caseId: string; onChange: () => voi
     );
   }
 
+  const attachedPath = justAttached || (currentStatus === "ready" ? currentPath : "");
+
   return (
     <div className="space-y-2">
+      {attachedPath ? (
+        <div className="flex items-center gap-2 text-xs rounded border border-success/40 bg-success/10 px-2 py-1.5 text-success">
+          <Check size={13} className="shrink-0" />
+          <span>Attached: <code>{attachedPath}</code> — ready. Run “Discover vulns” or a stage.</span>
+        </div>
+      ) : null}
+      {attach.isPending ? (
+        <div className="flex items-center gap-2 text-xs text-fgmuted">
+          <Loader2 size={12} className="animate-spin" /> Attaching…
+        </div>
+      ) : null}
       <div className="text-[11px] text-fgmuted flex items-center gap-1">
         <FolderTree size={11} /> SOURCE_ROOT{path ? ` / ${path}` : ""}
       </div>
@@ -208,13 +228,16 @@ function LocalPicker({ caseId, onChange }: { caseId: string; onChange: () => voi
         ) : null}
         {(data?.dirs ?? []).map((d) => {
           const child = path ? `${path}/${d}` : d;
+          const isAttached = attachedPath === child;
           return (
-            <span key={d} className="inline-flex rounded border border-border overflow-hidden text-xs">
+            <span key={d} className={"inline-flex rounded border overflow-hidden text-xs " +
+              (isAttached ? "border-success/50 bg-success/10" : "border-border")}>
               <button type="button" onClick={() => setPath(child)}
                       className="px-2 py-1 hover:bg-muted/50">{d}</button>
-              <button type="button" title="Use this directory"
-                      onClick={() => attach.mutate(child)}
-                      className="px-1.5 border-l border-border text-primary hover:bg-primary/10">
+              <button type="button" title="Attach this directory as the source"
+                      onClick={() => attach.mutate(child)} disabled={attach.isPending}
+                      className={"px-1.5 border-l border-border hover:bg-primary/10 " +
+                        (isAttached ? "text-success" : "text-primary")}>
                 <Check size={12} />
               </button>
             </span>
@@ -225,8 +248,9 @@ function LocalPicker({ caseId, onChange }: { caseId: string; onChange: () => voi
       <div className="flex items-center gap-1">
         <Input value={path} onChange={(e) => setPath(e.target.value)}
                placeholder="or type a path under SOURCE_ROOT" className="text-xs" />
-        <Button type="button" size="sm" onClick={() => attach.mutate(path)} disabled={attach.isPending}>
-          Attach
+        <Button type="button" size="sm" onClick={() => attach.mutate(path)}
+                disabled={attach.isPending || !path}>
+          {attach.isPending ? "Attaching…" : "Attach"}
         </Button>
       </div>
       {attach.isError ? (
