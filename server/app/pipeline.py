@@ -705,6 +705,35 @@ def _run_report_stage(db, run) -> str:
     return text
 
 
+def _autopilot_after_discover(db, case) -> None:
+    """Queue impact scoring for each finding that doesn't have one yet.
+
+    Each impact run is its own model call (its own context), drained by the
+    executor over time — so a big discovery becomes a queue, not one huge prompt.
+    """
+    if not case or not case.autopilot or not case.scan_id:
+        return
+    scored = {
+        r.finding_id for r in db.query(models.StageRun).filter(
+            models.StageRun.case_id == case.id,
+            models.StageRun.stage == models.StageType.impact,
+        )
+    }
+    new_ids = []
+    for f in (case.scan.finding_rows if case.scan else []):
+        if f.id in scored:
+            continue
+        r = models.StageRun(case_id=case.id, finding_id=f.id, stage=models.StageType.impact)
+        db.add(r)
+        db.flush()
+        new_ids.append(r.id)
+    if new_ids:
+        db.commit()
+        log.info("autopilot: queued impact for %d finding(s) on case %s", len(new_ids), case.id)
+        for rid in new_ids:
+            submit(rid)
+
+
 # --------------------------------------------------------------- dispatch
 
 _RUNNERS = {
@@ -762,3 +791,10 @@ def run_stage(db, run: models.StageRun) -> None:
         run.error = f"{type(e).__name__}: {e}"[:2000]
     run.completed_at = dt.datetime.now(dt.timezone.utc)
     db.commit()
+
+    # Autopilot: after a successful discovery, kick off impact on each finding.
+    if run.stage == models.StageType.discover and run.status == models.StageRunStatus.done:
+        try:
+            _autopilot_after_discover(db, db.get(models.Case, run.case_id))
+        except Exception:
+            log.exception("autopilot after discover failed for case %s", run.case_id)

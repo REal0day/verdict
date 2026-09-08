@@ -1019,6 +1019,10 @@ class Case(Base):
     # Default PoC mode for this case: False = draft only (a human runs it),
     # True = opt-in auto-execution (still gated by active-testing authorisation).
     poc_auto_execute: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # When True (default), impact scoring auto-runs on each finding right after
+    # discovery — so the findings table fills with severity/CVSS without manual
+    # per-finding clicks.
+    autopilot: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[dt.datetime] = mapped_column(

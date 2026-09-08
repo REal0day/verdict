@@ -253,3 +253,30 @@ def test_endpoint_context_400_reports_the_real_loaded_context(env):
     run = _run(env, P(context_window=32000), stage=models.StageType.discover, finding=False)
     assert run.status == models.StageRunStatus.error
     assert "4,096" in run.error and "32,000" in run.error and "RELOAD" in run.error
+
+
+def test_autopilot_queues_impact_after_discovery(env, monkeypatch):
+    # discover finds 2 vulns; autopilot should auto-queue impact for each.
+    submitted = []
+    monkeypatch.setattr(pipeline, "submit", lambda rid: submitted.append(rid))
+    env.case.autopilot = True
+    env.commit()
+    provider = _J({"findings": [
+        {"title": "A", "severity": "high"}, {"title": "B", "severity": "low"},
+    ]})
+    run = _run(env, provider, stage=models.StageType.discover, finding=False)
+    assert run.status == models.StageRunStatus.done
+    impact_runs = env.query(models.StageRun).filter_by(stage=models.StageType.impact).all()
+    assert len(impact_runs) == 3   # the fixture finding + the 2 discovered
+    assert len(submitted) == 3   # all queued to the executor
+
+
+def test_autopilot_off_does_not_queue(env, monkeypatch):
+    submitted = []
+    monkeypatch.setattr(pipeline, "submit", lambda rid: submitted.append(rid))
+    env.case.autopilot = False
+    env.commit()
+    run = _run(env, _J({"findings": [{"title": "A", "severity": "high"}]}),
+               stage=models.StageType.discover, finding=False)
+    assert run.status == models.StageRunStatus.done
+    assert env.query(models.StageRun).filter_by(stage=models.StageType.impact).count() == 0

@@ -101,7 +101,7 @@ export function CaseDetail() {
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2 space-y-6">
           <FindingsCard findings={c.findings} scanId={c.scan_id} caseId={c.id}
-                        sourceReady={c.source?.status === "ready"}
+                        sourceReady={c.source?.status === "ready"} autopilot={c.autopilot}
                         caseTitle={c.title} onChange={refresh} />
           <StagesCard c={c} onChange={refresh} />
         </div>
@@ -286,13 +286,32 @@ function UploadInfo({ caseId, projectId, onChange }: {
 
 /* ---------------------------------------------------------------- findings */
 
-function FindingsCard({ findings, scanId, caseId, sourceReady, caseTitle, onChange }: {
+function FindingsCard({ findings, scanId, caseId, sourceReady, autopilot, caseTitle, onChange }: {
   findings: FindingRow[]; scanId: string | null; caseId: string;
-  sourceReady: boolean; caseTitle: string; onChange: () => void;
+  sourceReady: boolean; autopilot: boolean; caseTitle: string; onChange: () => void;
 }) {
   const [adding, setAdding] = useState(false);
   const [title, setTitle] = useState("");
   const [severity, setSeverity] = useState("unknown");
+  const [bulkStage, setBulkStage] = useState("impact");
+
+  const bulk = useMutation({
+    mutationFn: (stage: string) =>
+      api(`/cases/${caseId}/stages/bulk`, { method: "POST", body: { stage, only_missing: true } }),
+    onSuccess: onChange,
+  });
+  const fullPipeline = useMutation({
+    mutationFn: async () => {
+      for (const stage of ["source", "impact", "remediation", "poc"]) {
+        await api(`/cases/${caseId}/stages/bulk`, { method: "POST", body: { stage, only_missing: true } });
+      }
+    },
+    onSuccess: onChange,
+  });
+  const toggleAuto = useMutation({
+    mutationFn: () => api(`/cases/${caseId}`, { method: "PATCH", body: { autopilot: !autopilot } }),
+    onSuccess: onChange,
+  });
 
   const add = useMutation({
     mutationFn: () => api(`/scans/${scanId}/findings`, {
@@ -345,6 +364,27 @@ function FindingsCard({ findings, scanId, caseId, sourceReady, caseTitle, onChan
             <Button size="sm" onClick={() => add.mutate()} disabled={add.isPending}>
               {add.isPending ? "Adding…" : "Add"}
             </Button>
+          </div>
+        ) : null}
+        {findings.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-2 mb-4 pb-4 border-b border-border">
+            <span className="text-xs text-fgmuted">Run on all {findings.length}:</span>
+            <Select value={bulkStage} onChange={(e) => setBulkStage(e.target.value)}
+                    className="text-xs w-auto">
+              {["impact","source","remediation","poc"].map((v) => <option key={v} value={v}>{v}</option>)}
+            </Select>
+            <Button size="sm" variant="secondary" onClick={() => bulk.mutate(bulkStage)}
+                    disabled={bulk.isPending}>
+              {bulk.isPending ? "Queuing…" : `Run ${bulkStage} on all`}
+            </Button>
+            <Button size="sm" onClick={() => fullPipeline.mutate()} disabled={fullPipeline.isPending}>
+              <Play size={12} /> {fullPipeline.isPending ? "Queuing…" : "Full pipeline"}
+            </Button>
+            <label className="text-xs text-fgmuted inline-flex items-center gap-1 ml-auto cursor-pointer"
+                   title="Auto-score impact on each finding right after discovery">
+              <input type="checkbox" checked={autopilot} onChange={() => toggleAuto.mutate()} />
+              auto-impact after discovery
+            </label>
           </div>
         ) : null}
         {findings.length === 0 ? (

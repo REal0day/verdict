@@ -793,6 +793,7 @@ class CaseUpdate(BaseModel):
     ai_provider: str | None = None
     ai_model: str | None = None
     poc_auto_execute: bool | None = None
+    autopilot: bool | None = None
     report_text: str | None = None
 
 
@@ -807,6 +808,7 @@ class CaseOut(BaseModel):
     ai_provider: str | None
     ai_model: str | None
     poc_auto_execute: bool
+    autopilot: bool = True
     finding_count: int = 0
     stage_run_count: int = 0
     pending_stage_count: int = 0
@@ -862,3 +864,8 @@ class CaseDetail(CaseOut):
     source: CaseSourceOut | None = None
     findings: list[FindingOut] = []
     stage_runs: list[StageRunOut] = []
+
+
+class BulkStageRequest(BaseModel):
+    stage: str                       # a finding stage: source|impact|remediation|poc
+    only_missing: bool = True        # skip findings that already have a done run for this stage

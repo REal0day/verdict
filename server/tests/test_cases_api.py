@@ -207,3 +207,19 @@ def test_update_case_status_and_model(client):
     body = r.json()
     assert body["status"] == "blocked"
     assert body["ai_provider"] == "openai" and body["ai_model"] == "gpt-4o"
+
+
+def test_bulk_stage_queues_for_all_findings(client):
+    case = _mk_case(client)
+    db = database.SessionLocal()
+    uid = db.get(models.Case, case["id"]).user_id
+    for t in ("A", "B", "C"):
+        db.add(models.Finding(scan_id=case["scan_id"], user_id=uid, title=t))
+    db.commit(); db.close()
+    r = client.post(f"/cases/{case['id']}/stages/bulk", headers=client.owner,
+                    json={"stage": "impact"})
+    assert r.status_code == 200 and r.json()["queued"] == 3
+    # a case-level stage is rejected by the bulk (finding-only) endpoint
+    r = client.post(f"/cases/{case['id']}/stages/bulk", headers=client.owner,
+                    json={"stage": "report"})
+    assert r.status_code == 400

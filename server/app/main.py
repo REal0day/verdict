@@ -254,6 +254,10 @@ def _ensure_onboarding_column():
         conn.execute(text(
             "ALTER TABLE stage_runs ADD COLUMN IF NOT EXISTS artifact_id VARCHAR(36)"
         ))
+        # Case: auto-run impact after discovery.
+        conn.execute(text(
+            "ALTER TABLE cases ADD COLUMN IF NOT EXISTS autopilot BOOLEAN NOT NULL DEFAULT TRUE"
+        ))
 
     # ALTER TYPE … ADD VALUE can't run inside a transaction; needs its
     # own AUTOCOMMIT connection. Run it after the main DDL block above.

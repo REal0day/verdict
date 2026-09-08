@@ -14,7 +14,7 @@ import { Microscope, Plus, X, FolderGit2, ListChecks, Upload } from "lucide-reac
 export type CaseOut = {
   id: string; user_id: string; project_id: string | null; project_name: string | null;
   scan_id: string | null; title: string; status: string;
-  ai_provider: string | null; ai_model: string | null; poc_auto_execute: boolean;
+  ai_provider: string | null; ai_model: string | null; poc_auto_execute: boolean; autopilot: boolean;
   finding_count: number; stage_run_count: number; pending_stage_count: number;
   has_report: boolean; created_at: string; updated_at: string;
 };

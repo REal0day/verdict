@@ -258,6 +258,8 @@ def update_case(
         case.ai_model = (data["ai_model"] or "").strip() or None
     if "poc_auto_execute" in data and data["poc_auto_execute"] is not None:
         case.poc_auto_execute = bool(data["poc_auto_execute"])
+    if "autopilot" in data and data["autopilot"] is not None:
+        case.autopilot = bool(data["autopilot"])
     if "report_text" in data:
         case.report_enc = (
             crypto.encrypt(data["report_text"].encode("utf-8"))
@@ -342,6 +344,45 @@ def queue_stage(
     if body.autorun:
         pipeline.submit(run.id)
     return _stage_out(db, run)
+
+
+@router.post("/{case_id}/stages/bulk")
+def queue_stage_for_all_findings(
+    case_id: str,
+    body: schemas.BulkStageRequest,
+    db: Session = Depends(get_db),
+    viewer: models.User = Depends(get_current_user),
+):
+    """Queue one finding-level stage for every finding in the case at once."""
+    case = db.get(models.Case, case_id)
+    if not case:
+        raise HTTPException(404, "case not found")
+    assert_can_edit_case(db, viewer, case)
+    stage = _enum(body.stage, models.StageType, "stage")
+    if stage not in _FINDING_STAGES:
+        raise HTTPException(400, f"{stage.value} is not a per-finding stage")
+
+    findings = case.scan.finding_rows if case.scan else []
+    done = {
+        r.finding_id for r in db.query(models.StageRun).filter(
+            models.StageRun.case_id == case.id, models.StageRun.stage == stage,
+            models.StageRun.status == models.StageRunStatus.done,
+        )
+    } if body.only_missing else set()
+
+    queued = []
+    for f in findings:
+        if f.id in done:
+            continue
+        run = models.StageRun(case_id=case.id, finding_id=f.id, stage=stage)
+        db.add(run); db.flush()
+        queued.append(run.id)
+    if case.status == models.CaseStatus.intake and queued:
+        case.status = models.CaseStatus.active
+    db.commit()
+    for rid in queued:
+        pipeline.submit(rid)
+    return {"stage": stage.value, "queued": len(queued)}
 
 
 @router.post("/{case_id}/stages/{run_id}/run", response_model=schemas.StageRunOut)
