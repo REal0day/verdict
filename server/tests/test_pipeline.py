@@ -244,11 +244,12 @@ def test_output_tokens_are_capped_to_the_context(env):
     assert captured["max_tokens"] <= 4096 // 4
 
 
-def test_endpoint_context_400_becomes_a_clear_error(env):
+def test_endpoint_context_400_reports_the_real_loaded_context(env):
     from app.ai.errors import AIProviderUnavailable
     class P(FakeProvider):
         def chat(self, system, messages, max_tokens=None):
-            raise AIProviderUnavailable("Local model", "n_keep 10341 >= n_ctx 4096 context length")
+            raise AIProviderUnavailable("Local model", "n_keep: 10341 >= n_ctx: 4096")
+    # Verdict is set to 32000 but the endpoint is really at 4096 -> say so + reload.
     run = _run(env, P(context_window=32000), stage=models.StageType.discover, finding=False)
     assert run.status == models.StageRunStatus.error
-    assert "context window" in run.error
+    assert "4,096" in run.error and "32,000" in run.error and "RELOAD" in run.error

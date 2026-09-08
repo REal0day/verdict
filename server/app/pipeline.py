@@ -58,21 +58,38 @@ _CTX_ERROR_MARKERS = ("context length", "context window", "n_ctx", "n_keep",
 
 
 class StageInputTooBig(RuntimeError):
-    """The prompt (mostly the source digest) doesn't fit the model's context."""
+    """The prompt (mostly the source digest) doesn't fit the model's context.
 
-    def __init__(self, prompt_tokens: int, context_window: int):
+    `endpoint_ctx` is the context the model server *actually* rejected on, when
+    we can read it from the upstream error — which may be smaller than the
+    context configured in Verdict (i.e. the model isn't loaded at that size).
+    """
+
+    def __init__(self, prompt_tokens: int, configured_ctx: int, endpoint_ctx: int | None = None):
         self.prompt_tokens = prompt_tokens
-        self.context_window = context_window
+        self.configured_ctx = configured_ctx
+        self.endpoint_ctx = endpoint_ctx
         super().__init__("source too big for the model's context window")
 
     @property
     def message(self) -> str:
+        need = self.prompt_tokens
+        if self.endpoint_ctx and self.endpoint_ctx < self.configured_ctx:
+            return (
+                f"The model server rejected the prompt: it needs ~{need:,} tokens "
+                f"but the model is actually loaded with only {self.endpoint_ctx:,} "
+                f"tokens of context — even though Verdict is set to "
+                f"{self.configured_ctx:,}. The model isn't loaded at that size. In "
+                f"LM Studio: EJECT the model, set Context Length to at least "
+                f"{max(self.configured_ctx, need + 2048):,}, and RELOAD it (the "
+                f"setting only applies on reload). Then re-run."
+            )
         return (
-            f"The source is about {self.prompt_tokens:,} tokens but this model's "
-            f"context window is {self.context_window:,}. Fixes: load the model "
-            f"with a larger context (e.g. LM Studio → Context Length) and set it "
-            f"under Settings → AI; attach a narrower source path; or use a model "
-            f"with a bigger context. (A guided large-repo mode is planned.)"
+            f"The source is about {need:,} tokens but this model's context window "
+            f"is {self.configured_ctx:,}. Fixes: load the model with a larger "
+            f"context (e.g. LM Studio → Context Length) and set it under "
+            f"Settings → AI; attach a narrower source path; or use a bigger-"
+            f"context model. (A guided large-repo mode is planned.)"
         )
 
 
@@ -83,6 +100,14 @@ def _est_tokens(text: str) -> int:
 def _is_context_error(exc: Exception) -> bool:
     msg = str(exc).lower()
     return any(m in msg for m in _CTX_ERROR_MARKERS)
+
+
+def _parse_endpoint_ctx(msg: str) -> int | None:
+    """Pull the real n_ctx / context length out of an upstream error, if present."""
+    m = re.search(r"n_ctx[:\s=]+(\d+)", msg, re.I) or \
+        re.search(r"context length[^\d]{0,20}(\d{3,})", msg, re.I) or \
+        re.search(r"maximum context length is (\d+)", msg, re.I)
+    return int(m.group(1)) if m else None
 
 
 def submit(run_id: str) -> None:
@@ -232,8 +257,11 @@ def _chat(provider, system: str, user: str, want_output: int) -> str:
         raw = provider.chat(system, [{"role": "user", "content": user}], max_tokens=out) or ""
     except AIProviderUnavailable as e:
         if _is_context_error(e):
-            raise StageInputTooBig(_est_tokens(system) + _est_tokens(user),
-                                   int(getattr(provider, "context_window", 8192) or 8192))
+            raise StageInputTooBig(
+                _est_tokens(system) + _est_tokens(user),
+                int(getattr(provider, "context_window", 8192) or 8192),
+                endpoint_ctx=_parse_endpoint_ctx(str(e)),
+            )
         raise
     log.info(
         "stage model response via %s (%d chars): %s%s",
