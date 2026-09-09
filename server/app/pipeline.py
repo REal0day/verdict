@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -35,6 +36,11 @@ _pool = ThreadPoolExecutor(
     max_workers=max(1, settings.pipeline_max_concurrent),
     thread_name_prefix="stage",
 )
+
+# A single local model instance can't handle concurrent requests (it 500s), so
+# serialize every call to a self-hosted endpoint. Hosted providers are fine
+# concurrently, so they don't take the lock.
+_local_lock = threading.Lock()
 
 
 class StageModelError(RuntimeError):
@@ -220,6 +226,8 @@ def _source_digest(root: Path, budget: int, focus: str = "") -> str:
 def _extract_json(text: str):
     """Pull a JSON value out of a model response. Returns the object or None."""
     t = (text or "").strip()
+    # Reasoning models sometimes inline their chain-of-thought in <think>…</think>.
+    t = re.sub(r"<think>.*?</think>", "", t, flags=re.S | re.I).strip()
     m = re.search(r"```(?:json)?\s*(.*?)```", t, re.S)
     if m:
         t = m.group(1).strip()
@@ -242,19 +250,22 @@ def _fit_output(provider, system: str, user: str, want_output: int) -> int:
     can't fit at all (StageInputTooBig) — rather than let the endpoint 400."""
     ctx = int(getattr(provider, "context_window", 8192) or 8192)
     prompt_tokens = _est_tokens(system) + _est_tokens(user)
-    out = min(want_output, max(256, ctx // 4))
-    if prompt_tokens + out > ctx:
-        # Try shrinking the output first; if the prompt alone won't fit, give up.
-        out = ctx - prompt_tokens - 64
-        if out < 256:
-            raise StageInputTooBig(prompt_tokens, ctx)
-    return out
+    avail = ctx - prompt_tokens - 512   # everything left over is fair game for output
+    if avail < 256:
+        raise StageInputTooBig(prompt_tokens, ctx)
+    # A reasoning model burns much of the budget thinking before it answers, so
+    # give it real room — cap at the request, but never starve it below ~4k.
+    return max(min(want_output, avail), min(4096, avail))
 
 
 def _chat(provider, system: str, user: str, want_output: int) -> str:
     out = _fit_output(provider, system, user, want_output)
+    import contextlib
+    serialize = getattr(provider, "name", "") == "local"
+    gate = _local_lock if serialize else contextlib.nullcontext()
     try:
-        raw = provider.chat(system, [{"role": "user", "content": user}], max_tokens=out) or ""
+        with gate:
+            raw = provider.chat(system, [{"role": "user", "content": user}], max_tokens=out) or ""
     except AIProviderUnavailable as e:
         if _is_context_error(e):
             raise StageInputTooBig(
@@ -479,7 +490,7 @@ def _run_impact_stage(db, run) -> str:
         user += f"\n{_digest_for(db, run, budget=100_000, focus=finding.affected_component)}\n"
     user += "\nScore this finding and return the JSON object."
 
-    parsed, raw = _ask_json(provider, _IMPACT_SYSTEM, user, max_tokens=4096)
+    parsed, raw = _ask_json(provider, _IMPACT_SYSTEM, user, max_tokens=16384)
     if not isinstance(parsed, dict):
         raise StageModelError("The model did not return a JSON object.", raw)
 

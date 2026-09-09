@@ -240,8 +240,8 @@ def test_output_tokens_are_capped_to_the_context(env):
             return '{"findings": []}'
     provider = P(context_window=4096)
     _run(env, provider, stage=models.StageType.discover, finding=False)
-    # never request more output than a quarter of the (small) context
-    assert captured["max_tokens"] <= 4096 // 4
+    # output uses the room left in the context, but the whole request must fit
+    assert 0 < captured["max_tokens"] < 4096
 
 
 def test_endpoint_context_400_reports_the_real_loaded_context(env):
